@@ -1,0 +1,9 @@
+[package]
+name = "nl-compiler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+safety-net = { git = "https://github.com/matth2k/safety-net.git", branch = "compiler" }
+sv-parser = { version = "0.13.3" }
+clap = { version = "4.5.31", features = ["derive"] }
