@@ -1,16 +1,10 @@
-pub mod result;
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![warn(missing_docs, unreachable_pub)]
+/*!
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+`nl-compiler`
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+An experimental library for HDL frontends that can compile to [safety-net](https://crates.io/crates/safety-net) netlists.
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+*/
+pub mod verilog;

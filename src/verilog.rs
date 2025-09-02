@@ -15,11 +15,14 @@ use safety_net::{
 };
 use sv_parser::{Locate, NodeEvent, RefNode, unwrap_node};
 
+/// A trait to specify how to map primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
 pub trait FromId: Sized {
+    /// Maps primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
     fn from_id(s: &Identifier) -> Result<Self, String>;
 }
 
-pub fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, String> {
+/// From a AST node, read in the identifier from the source location
+fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, String> {
     let id: Option<Locate> = match unwrap_node!(
         node,
         SimpleIdentifier,
@@ -48,12 +51,14 @@ pub fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Iden
     match id {
         None => Err("Expected a Simple, Escaped, or Net identifier".to_string()),
         Some(x) => match ast.get_str(&x) {
-            None => Err("Expected an identifier".to_string()),
+            None => Err(format!("Expected an identifier at {x:?}")),
             Some(x) => Ok(x.to_string().into()),
         },
     }
 }
 
+/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Type parameter I defines the primitive library to parse into.
 pub fn from_ast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
 ) -> Result<Rc<Netlist<I>>, String> {
@@ -61,6 +66,8 @@ pub fn from_ast<I: Instantiable + FromId>(
     let mut output_set = HashSet::new();
     let mut multiple = false;
     let mut drivers: HashMap<Identifier, DrivenNet<I>> = HashMap::new();
+
+    // Pass one
     for node_event in ast.into_iter().event() {
         match node_event {
             // Hande module definition
@@ -73,7 +80,7 @@ pub fn from_ast<I: Instantiable + FromId>(
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();
-                let name = get_identifier(id, ast).unwrap();
+                let name = get_identifier(id, ast)?;
                 netlist.set_name(name.to_string());
                 multiple = true;
             }
@@ -87,7 +94,7 @@ pub fn from_ast<I: Instantiable + FromId>(
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();
-                let name = get_identifier(id, ast).unwrap();
+                let name = get_identifier(id, ast)?;
                 netlist.set_name(name.to_string());
                 multiple = true;
             }
@@ -95,9 +102,9 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Handle primitive instantiation
             NodeEvent::Enter(RefNode::ModuleInstantiation(inst)) => {
                 let id = unwrap_node!(inst, ModuleIdentifier).unwrap();
-                let mod_name = get_identifier(id, ast).unwrap();
+                let mod_name = get_identifier(id, ast)?;
                 let id = unwrap_node!(inst, InstanceIdentifier).unwrap();
-                let inst_name = get_identifier(id, ast).unwrap();
+                let inst_name = get_identifier(id, ast)?;
                 let instantiable = I::from_id(&mod_name)?;
                 netlist.insert_gate_disconnected(instantiable, inst_name)?;
             }
@@ -105,7 +112,7 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Handle input decl
             NodeEvent::Enter(RefNode::InputDeclarationNet(output)) => {
                 let id = unwrap_node!(output, PortIdentifier).unwrap();
-                let name = get_identifier(id, ast).unwrap();
+                let name = get_identifier(id, ast)?;
                 let net = Net::new_logic(name.clone());
                 drivers.insert(name, netlist.insert_input(net));
             }
@@ -113,28 +120,25 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Handle output decl
             NodeEvent::Enter(RefNode::OutputDeclarationNet(output)) => {
                 let id = unwrap_node!(output, PortIdentifier).unwrap();
-                let name = get_identifier(id, ast).unwrap();
+                let name = get_identifier(id, ast)?;
                 output_set.insert(name);
             }
 
             // Handle instance connection
             NodeEvent::Enter(RefNode::NamedPortConnection(connection)) => {
                 let port = unwrap_node!(connection, PortIdentifier).unwrap();
-                let port_name = get_identifier(port, ast).unwrap();
+                let port_name = get_identifier(port, ast)?;
                 let arg = unwrap_node!(connection, Expression).unwrap();
                 let arg_i = unwrap_node!(arg.clone(), HierarchicalIdentifier);
+                let gate = netlist.last().unwrap();
 
                 match arg_i {
                     Some(n) => {
-                        let arg_name = get_identifier(n, ast).unwrap();
-                        let gate = netlist.last().unwrap();
-                        if let Some(iport) = gate.find_input(&port_name) {
-                            // TODO: This will fail for cycles / not in topo order
-                            iport.connect(drivers[&arg_name].clone());
-                        } else if let Some(oport) = gate.find_output(&port_name) {
+                        let arg_name = get_identifier(n, ast)?;
+                        if let Some(oport) = gate.find_output(&port_name) {
                             oport.as_net_mut().set_identifier(arg_name.clone());
                             drivers.insert(arg_name, oport);
-                        } else {
+                        } else if gate.find_input(&port_name).is_none() {
                             return Err(format!(
                                 "Could not find port {} on instance {}",
                                 port_name,
@@ -143,25 +147,27 @@ pub fn from_ast<I: Instantiable + FromId>(
                         }
                     }
                     None => {
-                        todo!("Handle tied/constant drivers");
+                        if gate.find_output(&port_name).is_some() {
+                            return Err("Cannot drive a constant from an output port".to_string());
+                        } else if gate.find_input(&port_name).is_none() {
+                            return Err(format!(
+                                "Could not find port {} on instance {}",
+                                port_name,
+                                gate.get_instance_name().unwrap()
+                            ));
+                        }
                     }
                 }
             }
-            // NodeEvent::Leave(RefNode::NamedPortConnection(_connection)) => (),
 
-            // // Handle wire/net decl
-            // NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl)) => {
-            //     let id = unwrap_node!(net_decl, NetIdentifier).unwrap();
-            //     if unwrap_node!(net_decl, UnpackedDimension).is_some() {
-            //         panic!("Only support 1 bit signals!");
-            //     }
-            //     let name = get_identifier(id, ast).unwrap();
-            //     cur_signals.push(SVSignal::new(1, name));
-            // }
-            // NodeEvent::Leave(RefNode::NetDeclAssignment(_net_decl)) => (),
+            // Handle wire/net decl
+            NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl)) => {
+                if unwrap_node!(net_decl, UnpackedDimension).is_some() {
+                    return Err("Only single bit nets are supported".to_string());
+                }
+            }
 
-            // // Handle wire assignment
-            // // TODO(mrh259): Refactor this branch of logic and this function in general
+            // Handle wire assignment
             // NodeEvent::Enter(RefNode::NetAssignment(net_assign)) => {
             //     let lhs = unwrap_node!(net_assign, NetLvalue).unwrap();
             //     let lhs_id = unwrap_node!(lhs, Identifier).unwrap();
@@ -197,7 +203,6 @@ pub fn from_ast<I: Instantiable + FromId>(
             //         ));
             //     }
             // }
-            NodeEvent::Leave(RefNode::NetAssignment(_net_assign)) => (),
 
             // The stuff we definitely don't support
             NodeEvent::Enter(RefNode::BinaryOperator(_)) => {
@@ -216,6 +221,28 @@ pub fn from_ast<I: Instantiable + FromId>(
                 return Err("If/else block not supported".to_string());
             }
             _ => (),
+        }
+    }
+
+    // Pass two
+    for node_event in ast.into_iter().event() {
+        if let NodeEvent::Enter(RefNode::NamedPortConnection(connection)) = node_event {
+            let port = unwrap_node!(connection, PortIdentifier).unwrap();
+            let port_name = get_identifier(port, ast)?;
+            let arg = unwrap_node!(connection, Expression).unwrap();
+            let arg_i = unwrap_node!(arg.clone(), HierarchicalIdentifier);
+            let gate = netlist.last().unwrap();
+            if let Some(iport) = gate.find_input(&port_name) {
+                match arg_i {
+                    Some(n) => {
+                        let arg_name = get_identifier(n, ast)?;
+                        iport.connect(drivers[&arg_name].clone());
+                    }
+                    None => {
+                        todo!("Handle tied/constant drivers");
+                    }
+                }
+            }
         }
     }
     Ok(netlist)

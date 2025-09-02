@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::Parser;
-use nl_compiler::result::{self, FromId};
+use nl_compiler::verilog::{self, FromId};
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
@@ -117,7 +117,7 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let netlist = result::from_ast::<Gate>(&ast).map_err(std::io::Error::other)?;
+    let netlist = verilog::from_ast::<Gate>(&ast).map_err(std::io::Error::other)?;
 
     println!("{}", netlist);
 
