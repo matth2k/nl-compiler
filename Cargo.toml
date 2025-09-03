@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-safety-net = { version = "0.1.2", features = ["graph"] }
+safety-net = { version = "0.1.3", features = ["graph"] }
 sv-parser = { version = "0.13.3" }
 
 # These are only needed to drive the example. Remove later

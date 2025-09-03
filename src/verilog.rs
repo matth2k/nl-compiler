@@ -12,7 +12,6 @@ use std::{
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
-    format_id,
     logic::Logic,
     netlist::{DrivenNet, NetRef, Netlist},
 };
@@ -239,21 +238,16 @@ pub fn from_ast<I: Instantiable + FromId>(
                             }
                             let value = parse_literal_as_logic(literal.unwrap(), ast)?;
 
-                            // TODO(matth2k): Need real identifier concatenation.
-                            // This needs to match below in pass two.
-                            let val_name = format_id!(
-                                "const_{}_{}",
-                                gate.get_instance_name().unwrap(),
-                                port_name
-                            );
+                            let val_name = &"const".into()
+                                + &gate.get_instance_name().unwrap()
+                                + port_name.clone();
                             let driverless = netlist.insert_constant(
                                 value,
-                                format_id!(
-                                    "const_inst_{}_{}",
-                                    gate.get_instance_name().unwrap(),
-                                    port_name
-                                ),
+                                Identifier::new("const_inst".to_string())
+                                    + gate.get_instance_name().unwrap()
+                                    + port_name,
                             )?;
+
                             driverless.as_net_mut().set_identifier(val_name.clone());
                             drivers.insert(val_name, driverless);
                         } else {
@@ -355,12 +349,9 @@ pub fn from_ast<I: Instantiable + FromId>(
                                 iport.connect(drivers[&arg_name].clone());
                             }
                             None => {
-                                // TODO(matth2k): Need real identifier concatenation
-                                let val_name = format_id!(
-                                    "const_{}_{}",
-                                    gate.as_ref().unwrap().get_instance_name().unwrap(),
-                                    port_name
-                                );
+                                let val_name = &"const".into()
+                                    + &gate.as_ref().unwrap().get_instance_name().unwrap()
+                                    + port_name;
                                 iport.connect(drivers[&val_name].clone());
                                 iter.next();
                             }
