@@ -204,7 +204,15 @@ fn main() -> std::io::Result<()> {
 
     let netlist = verilog::from_ast::<Gate>(&ast).map_err(std::io::Error::other)?;
 
-    println!("{}", netlist);
+    netlist.verify().map_err(std::io::Error::other)?;
+
+    eprintln!("{netlist}");
+    let analysis = netlist
+        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
+        .unwrap();
+    let graph = analysis.get_graph();
+    let dot = petgraph::dot::Dot::with_config(graph, &[]);
+    println!("{dot}");
 
     Ok(())
 }

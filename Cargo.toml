@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-safety-net = { version = "0.1.2" }
+safety-net = { version = "0.1.2", features = ["graph"] }
 sv-parser = { version = "0.13.3" }
+
+# These are only needed to drive the example. Remove later
 clap = { version = "4.5.31", features = ["derive"] }
+petgraph = { version = "0.8.2" }
