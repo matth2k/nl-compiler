@@ -244,8 +244,7 @@ fn main() -> std::io::Result<()> {
     let netlist = netlist.reclaim().unwrap();
 
     if args.serialize {
-        netlist_serialize(netlist, std::io::stdout())
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        netlist_serialize(netlist, std::io::stdout()).map_err(|e| std::io::Error::other(e))?;
     } else {
         eprintln!("{netlist}");
         let analysis = netlist
