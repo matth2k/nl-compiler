@@ -17,11 +17,7 @@ use safety_net::{
 };
 use sv_parser::{Locate, NodeEvent, RefNode, unwrap_node};
 
-/// A trait to specify how to map primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
-pub trait FromId: Sized {
-    /// Maps primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
-    fn from_id(s: &Identifier) -> Result<Self, String>;
-}
+use crate::cells::FromId;
 
 /// From a AST node, read in the identifier from the source location
 fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, String> {

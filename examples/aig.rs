@@ -1,12 +1,9 @@
-use std::{
-    collections::HashMap,
-    io::{Read, stdin},
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
+use flussab_aiger::ascii;
+use nl_compiler::aig::{self};
 use nl_compiler::cells::FromId;
-use nl_compiler::verilog::{self};
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
@@ -99,7 +96,7 @@ impl FromId for Gate {
                 outputs: vec!["Y".into()],
                 params: HashMap::new(),
             }),
-            "NOT" => Ok(Gate {
+            "NOT" | "INV" => Ok(Gate {
                 name: s.clone(),
                 inputs: vec!["A".into()],
                 outputs: vec!["Y".into()],
@@ -203,42 +200,26 @@ struct Args {
     serialize: bool,
 }
 
-/// A wrapper for parsing verilog at file `path` with content `s`
-fn sv_parse_wrapper(
-    s: &str,
-    path: Option<PathBuf>,
-) -> Result<sv_parser::SyntaxTree, sv_parser::Error> {
-    let incl: Vec<std::path::PathBuf> = vec![];
-    let path = path.unwrap_or(Path::new("top.v").to_path_buf());
-    match sv_parser::parse_sv_str(s, path, &HashMap::new(), &incl, true, false) {
-        Ok((ast, _defs)) => Ok(ast),
-        Err(e) => Err(e),
-    }
-}
-
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-    let mut buf = String::new();
 
-    let path: Option<PathBuf> = match args.input {
+    let rdr = match args.input {
         Some(p) => {
-            std::fs::File::open(&p)?.read_to_string(&mut buf)?;
-            Some(p)
+            ascii::Parser::<u64>::from_read(std::fs::File::open(&p)?, ascii::Config::default())
+                .map_err(std::io::Error::other)?
         }
-        None => {
-            stdin().read_to_string(&mut buf)?;
-            None
-        }
+        None => ascii::Parser::<u64>::from_read(std::io::stdin().lock(), ascii::Config::default())
+            .map_err(std::io::Error::other)?,
     };
 
-    let ast = sv_parse_wrapper(&buf, path).map_err(std::io::Error::other)?;
+    let aig = rdr.parse().map_err(std::io::Error::other)?;
 
     if args.dump_ast {
-        println!("{ast}");
+        println!("{aig:?}");
         return Ok(());
     }
 
-    let netlist = verilog::from_ast::<Gate>(&ast).map_err(std::io::Error::other)?;
+    let netlist = aig::from_aig::<Gate>(&aig, "top".to_string()).map_err(std::io::Error::other)?;
 
     netlist.verify().map_err(std::io::Error::other)?;
 
