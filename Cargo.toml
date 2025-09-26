@@ -7,14 +7,13 @@ edition = "2024"
 safety-net = { version = "0.1.6", features = ["graph"] }
 sv-parser = { version = "0.13.3" }
 flussab-aiger = { version = "0.1.1" }
-serde = { version = "1.0.219", optional = true, features = ["derive"] }
-serde_json = { version = "1.0.141", optional = true }
 
-# These are only needed to drive the example. Remove later
+[dev-dependencies]
 clap = { version = "4.5.31", features = ["derive"] }
 petgraph = { version = "0.8.2" }
-
+serde = { version = "1.0.219", features = ["derive"] }
 
 [features]
-default = [ "serde" ]
-serde = [ "dep:serde", "serde_json", "safety-net/serde" ]
+default = []
+# default = [ "serde" ]
+serde = [ "safety-net/serde" ]

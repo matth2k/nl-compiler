@@ -4,11 +4,12 @@ use clap::Parser;
 use flussab_aiger::ascii;
 use nl_compiler::aig::{self};
 use nl_compiler::cells::FromId;
+#[cfg(feature = "serde")]
+use safety_net::netlist::serde::netlist_serialize;
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
     logic::Logic,
-    netlist::serde::netlist_serialize,
 };
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
@@ -196,6 +197,7 @@ struct Args {
     #[arg(short = 'd', long, default_value_t = false)]
     dump_ast: bool,
     /// Serialize
+    #[cfg(feature = "serde")]
     #[arg(short = 's', long, default_value_t = false)]
     serialize: bool,
 }
@@ -225,17 +227,19 @@ fn main() -> std::io::Result<()> {
 
     let netlist = netlist.reclaim().unwrap();
 
+    #[cfg(feature = "serde")]
     if args.serialize {
         netlist_serialize(netlist, std::io::stdout()).map_err(std::io::Error::other)?;
-    } else {
-        eprintln!("{netlist}");
-        let analysis = netlist
-            .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
-            .unwrap();
-        let graph = analysis.get_graph();
-        let dot = petgraph::dot::Dot::with_config(graph, &[]);
-        println!("{dot}");
+        return Ok(());
     }
+
+    eprintln!("{netlist}");
+    let analysis = netlist
+        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
+        .unwrap();
+    let graph = analysis.get_graph();
+    let dot = petgraph::dot::Dot::with_config(graph, &[]);
+    println!("{dot}");
 
     Ok(())
 }
