@@ -4,6 +4,7 @@
 
 */
 
+use crate::error::AigError;
 use flussab_aiger::aig::Aig;
 use safety_net::{
     circuit::{Identifier, Instantiable, Net},
@@ -16,13 +17,17 @@ pub type U = u64;
 
 /// Construct a Safety Net [Netlist] from a AIG
 /// Type parameter I defines the primitive library to parse into.
-pub fn from_aig<I: Instantiable>(aig: &Aig<U>, and: I, inv: I) -> Result<Rc<Netlist<I>>, String> {
+pub fn from_aig<I: Instantiable>(aig: &Aig<U>, and: I, inv: I) -> Result<Rc<Netlist<I>>, AigError> {
     if !aig.bad_state_properties.is_empty() {
-        return Err("AIG bad state properties are not supported".to_string());
+        return Err(AigError::ContainsBadStates(
+            aig.bad_state_properties.clone(),
+        ));
     }
 
     if !aig.latches.is_empty() {
-        return Err("AIG latches are not supported".to_string());
+        return Err(AigError::ContainsLatches(
+            aig.latches.iter().map(|l| l.state).collect(),
+        ));
     }
 
     let netlist = Netlist::<I>::new("top".to_string());
