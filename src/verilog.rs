@@ -9,6 +9,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::{cells::FromId, error::VerilogError};
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
@@ -17,17 +18,16 @@ use safety_net::{
 };
 use sv_parser::{Locate, NodeEvent, RefNode, unwrap_node};
 
-use crate::cells::FromId;
-
 /// From a AST node, read in the identifier from the source location
-fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, String> {
+fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, VerilogError> {
     let id: Option<Locate> = match unwrap_node!(
         node,
         SimpleIdentifier,
         EscapedIdentifier,
         NetIdentifier,
         PortIdentifier,
-        Identifier
+        Identifier,
+        Locate
     ) {
         Some(RefNode::SimpleIdentifier(x)) => Some(x.nodes.0),
         Some(RefNode::EscapedIdentifier(x)) => Some(x.nodes.0),
@@ -43,28 +43,47 @@ fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifi
             sv_parser::Identifier::SimpleIdentifier(x) => Some(x.nodes.0),
             sv_parser::Identifier::EscapedIdentifier(x) => Some(x.nodes.0),
         },
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a SimpleIdentifier, EscapedIdentifier, NetIdentifier, PortIdentifier, or Identifier"
+                    .to_string(),
+            ));
+        }
         _ => None,
     };
 
     match id {
-        None => Err("Expected a Simple, Escaped, or Net identifier".to_string()),
+        None => Err(VerilogError::MissingRefNode("Expected a SimpleIdentifier, EscapedIdentifier, NetIdentifier, PortIdentifier, or Identifier"
+                    .to_string())),
         Some(x) => match ast.get_str(&x) {
-            None => Err(format!("Expected an identifier at {x:?}")),
+            None => Err(VerilogError::ParseStrError(x)),
             Some(x) => Ok(x.to_string().into()),
         },
     }
 }
 
 /// Parse a literal `node` in the `ast` into a four-state logic value
-fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Logic, String> {
-    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber);
+fn parse_literal_as_logic(
+    node: RefNode,
+    ast: &sv_parser::SyntaxTree,
+) -> Result<Logic, VerilogError> {
+    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber, Locate);
 
-    if value.is_none() {
-        return Err(
-            "Expected a BinaryValue, HexValue, or UnsignedNumber Node under the Literal"
-                .to_string(),
-        );
-    }
+    match value {
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        None => {
+            return Err(VerilogError::MissingRefNode(
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        _ => (),
+    };
 
     match value.unwrap() {
         RefNode::BinaryValue(b) => {
@@ -73,12 +92,11 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             if val == "x" {
                 return Ok(Logic::X);
             }
-            let num = u64::from_str_radix(val, 2)
-                .map_err(|_e| format!("Could not parse binary value {val} as bool"))?;
+            let num =
+                u64::from_str_radix(val, 2).map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         RefNode::HexValue(b) => {
@@ -87,12 +105,11 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             if val == "x" {
                 return Ok(Logic::X);
             }
-            let num = u64::from_str_radix(val, 16)
-                .map_err(|_e| format!("Could not parse hex value {val} as bool"))?;
+            let num =
+                u64::from_str_radix(val, 16).map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         RefNode::UnsignedNumber(b) => {
@@ -103,11 +120,10 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             }
             let num = val
                 .parse::<u64>()
-                .map_err(|_e| format!("Could not parse decimal value {val} as bool"))?;
+                .map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         _ => unreachable!(),
@@ -115,25 +131,35 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
 }
 
 /// Parse a literal `node` in the `ast` into a four-state logic value
-fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Parameter, String> {
-    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber);
+fn parse_literal_as_param(
+    node: RefNode,
+    ast: &sv_parser::SyntaxTree,
+) -> Result<Parameter, VerilogError> {
+    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber, Locate);
     let size = unwrap_node!(node, Size);
 
     // TODO(matth2k): Params need to be four-state logic too. Example: Reg init 1'hx
-
-    if value.is_none() {
-        return Err(
-            "Expected a BinaryValue, HexValue, or UnsignedNumber Node under the Literal"
-                .to_string(),
-        );
-    }
+    match value {
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        None => {
+            return Err(VerilogError::MissingRefNode(
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        _ => (),
+    };
 
     match (size, value) {
         (None, Some(RefNode::UnsignedNumber(n))) => Ok(Parameter::Integer(
             ast.get_str(&n.nodes.0)
                 .unwrap()
                 .parse::<u64>()
-                .map_err(|_e| "Could not parse decimal value as u64".to_string())?,
+                .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?,
         )),
         (Some(size), Some(RefNode::UnsignedNumber(n))) => {
             let size = unwrap_node!(size, NonZeroUnsignedNumber).unwrap();
@@ -142,15 +168,17 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = ast
                     .get_str(&n.nodes.0)
                     .unwrap()
                     .parse::<u64>()
-                    .map_err(|_e| "Could not parse decimal value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
         (Some(size), Some(RefNode::HexValue(n))) => {
@@ -160,12 +188,14 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 16)
-                    .map_err(|_e| "Could not parse hex value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
 
@@ -176,16 +206,20 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 2)
-                    .map_err(|_e| "Could not parse binary value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
 
-        _ => Err("Siz type combination is not supported".to_string()),
+        _ => Err(VerilogError::Other(
+            "Size type combination is not supported".to_string(),
+        )),
     }
 }
 
@@ -193,7 +227,7 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
 /// Type parameter I defines the primitive library to parse into.
 pub fn from_ast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
-) -> Result<Rc<Netlist<I>>, String> {
+) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::new("top".to_string());
     let mut output_set = HashSet::new();
     let mut multiple = false;
@@ -206,10 +240,10 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Hande module definition
             NodeEvent::Enter(RefNode::ModuleDeclarationAnsi(decl)) => {
                 if multiple {
-                    return Err(
+                    return Err(VerilogError::Other(
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
-                    );
+                    ));
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();
@@ -220,10 +254,10 @@ pub fn from_ast<I: Instantiable + FromId>(
 
             NodeEvent::Enter(RefNode::ModuleDeclarationNonansi(decl)) => {
                 if multiple {
-                    return Err(
+                    return Err(VerilogError::Other(
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
-                    );
+                    ));
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();

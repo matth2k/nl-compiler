@@ -8,6 +8,6 @@ An experimental library for HDL frontends that can compile to [safety-net](https
 
 */
 pub mod aig;
-pub mod error;
 pub mod cells;
+pub mod error;
 pub mod verilog;
