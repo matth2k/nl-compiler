@@ -68,22 +68,29 @@ fn parse_literal_as_logic(
     node: RefNode,
     ast: &sv_parser::SyntaxTree,
 ) -> Result<Logic, VerilogError> {
-    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber, Locate);
-
-    match value {
-        Some(RefNode::Locate(x)) => {
-            return Err(VerilogError::UnexpectedRefNode(
-                *x,
-                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
-            ));
-        }
-        None => {
-            return Err(VerilogError::MissingRefNode(
-                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
-            ));
-        }
-        _ => (),
+    let loc = unwrap_node!(node.clone(), Locate);
+    let loc = match loc {
+        Some(RefNode::Locate(x)) => Some(*x),
+        None => None,
+        _ => None,
     };
+    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber);
+
+    if value.is_none() {
+        match loc {
+            Some(l) => {
+                return Err(VerilogError::UnexpectedRefNode(
+                    l,
+                    "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+                ));
+            }
+            None => {
+                return Err(VerilogError::MissingRefNode(
+                    "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+                ));
+            }
+        };
+    }
 
     match value.unwrap() {
         RefNode::BinaryValue(b) => {
@@ -135,24 +142,31 @@ fn parse_literal_as_param(
     node: RefNode,
     ast: &sv_parser::SyntaxTree,
 ) -> Result<Parameter, VerilogError> {
-    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber, Locate);
+    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber);
+    let loc = unwrap_node!(node.clone(), Locate);
+    let loc = match loc {
+        Some(RefNode::Locate(x)) => Some(*x),
+        None => None,
+        _ => None,
+    };
     let size = unwrap_node!(node, Size);
 
     // TODO(matth2k): Params need to be four-state logic too. Example: Reg init 1'hx
-    match value {
-        Some(RefNode::Locate(x)) => {
-            return Err(VerilogError::UnexpectedRefNode(
-                *x,
-                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
-            ));
-        }
-        None => {
-            return Err(VerilogError::MissingRefNode(
-                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
-            ));
-        }
-        _ => (),
-    };
+    if value.is_none() {
+        match loc {
+            Some(l) => {
+                return Err(VerilogError::UnexpectedRefNode(
+                    l,
+                    "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+                ));
+            }
+            None => {
+                return Err(VerilogError::MissingRefNode(
+                    "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+                ));
+            }
+        };
+    }
 
     match (size, value) {
         (None, Some(RefNode::UnsignedNumber(n))) => Ok(Parameter::Integer(
