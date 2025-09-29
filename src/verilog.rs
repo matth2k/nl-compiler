@@ -9,6 +9,7 @@ use std::{
     rc::Rc,
 };
 
+use crate::{cells::FromId, error::VerilogError};
 use safety_net::{
     attribute::Parameter,
     circuit::{Identifier, Instantiable, Net},
@@ -17,17 +18,16 @@ use safety_net::{
 };
 use sv_parser::{Locate, NodeEvent, RefNode, unwrap_node};
 
-use crate::cells::FromId;
-
 /// From a AST node, read in the identifier from the source location
-fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, String> {
+fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifier, VerilogError> {
     let id: Option<Locate> = match unwrap_node!(
         node,
         SimpleIdentifier,
         EscapedIdentifier,
         NetIdentifier,
         PortIdentifier,
-        Identifier
+        Identifier,
+        Locate
     ) {
         Some(RefNode::SimpleIdentifier(x)) => Some(x.nodes.0),
         Some(RefNode::EscapedIdentifier(x)) => Some(x.nodes.0),
@@ -43,28 +43,47 @@ fn get_identifier(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Identifi
             sv_parser::Identifier::SimpleIdentifier(x) => Some(x.nodes.0),
             sv_parser::Identifier::EscapedIdentifier(x) => Some(x.nodes.0),
         },
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a SimpleIdentifier, EscapedIdentifier, NetIdentifier, PortIdentifier, or Identifier"
+                    .to_string(),
+            ));
+        }
         _ => None,
     };
 
     match id {
-        None => Err("Expected a Simple, Escaped, or Net identifier".to_string()),
+        None => Err(VerilogError::MissingRefNode("Expected a SimpleIdentifier, EscapedIdentifier, NetIdentifier, PortIdentifier, or Identifier"
+                    .to_string())),
         Some(x) => match ast.get_str(&x) {
-            None => Err(format!("Expected an identifier at {x:?}")),
+            None => Err(VerilogError::ParseStrError(x)),
             Some(x) => Ok(x.to_string().into()),
         },
     }
 }
 
 /// Parse a literal `node` in the `ast` into a four-state logic value
-fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Logic, String> {
-    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber);
+fn parse_literal_as_logic(
+    node: RefNode,
+    ast: &sv_parser::SyntaxTree,
+) -> Result<Logic, VerilogError> {
+    let value = unwrap_node!(node, BinaryValue, HexValue, UnsignedNumber, Locate);
 
-    if value.is_none() {
-        return Err(
-            "Expected a BinaryValue, HexValue, or UnsignedNumber Node under the Literal"
-                .to_string(),
-        );
-    }
+    match value {
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        None => {
+            return Err(VerilogError::MissingRefNode(
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        _ => (),
+    };
 
     match value.unwrap() {
         RefNode::BinaryValue(b) => {
@@ -73,12 +92,11 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             if val == "x" {
                 return Ok(Logic::X);
             }
-            let num = u64::from_str_radix(val, 2)
-                .map_err(|_e| format!("Could not parse binary value {val} as bool"))?;
+            let num =
+                u64::from_str_radix(val, 2).map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         RefNode::HexValue(b) => {
@@ -87,12 +105,11 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             if val == "x" {
                 return Ok(Logic::X);
             }
-            let num = u64::from_str_radix(val, 16)
-                .map_err(|_e| format!("Could not parse hex value {val} as bool"))?;
+            let num =
+                u64::from_str_radix(val, 16).map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         RefNode::UnsignedNumber(b) => {
@@ -103,11 +120,10 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
             }
             let num = val
                 .parse::<u64>()
-                .map_err(|_e| format!("Could not parse decimal value {val} as bool"))?;
+                .map_err(|e| VerilogError::ParseIntError(e, loc))?;
             match num {
-                1 => Ok(true.into()),
                 0 => Ok(false.into()),
-                _ => Err(format!("Expected a 1 bit constant. Found {num}")),
+                _ => Ok(true.into()),
             }
         }
         _ => unreachable!(),
@@ -115,25 +131,35 @@ fn parse_literal_as_logic(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
 }
 
 /// Parse a literal `node` in the `ast` into a four-state logic value
-fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<Parameter, String> {
-    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber);
+fn parse_literal_as_param(
+    node: RefNode,
+    ast: &sv_parser::SyntaxTree,
+) -> Result<Parameter, VerilogError> {
+    let value = unwrap_node!(node.clone(), BinaryValue, HexValue, UnsignedNumber, Locate);
     let size = unwrap_node!(node, Size);
 
     // TODO(matth2k): Params need to be four-state logic too. Example: Reg init 1'hx
-
-    if value.is_none() {
-        return Err(
-            "Expected a BinaryValue, HexValue, or UnsignedNumber Node under the Literal"
-                .to_string(),
-        );
-    }
+    match value {
+        Some(RefNode::Locate(x)) => {
+            return Err(VerilogError::UnexpectedRefNode(
+                *x,
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        None => {
+            return Err(VerilogError::MissingRefNode(
+                "Expected a BinaryValue, HexValue, UnsignedNumber".to_string(),
+            ));
+        }
+        _ => (),
+    };
 
     match (size, value) {
         (None, Some(RefNode::UnsignedNumber(n))) => Ok(Parameter::Integer(
             ast.get_str(&n.nodes.0)
                 .unwrap()
                 .parse::<u64>()
-                .map_err(|_e| "Could not parse decimal value as u64".to_string())?,
+                .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?,
         )),
         (Some(size), Some(RefNode::UnsignedNumber(n))) => {
             let size = unwrap_node!(size, NonZeroUnsignedNumber).unwrap();
@@ -142,15 +168,17 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = ast
                     .get_str(&n.nodes.0)
                     .unwrap()
                     .parse::<u64>()
-                    .map_err(|_e| "Could not parse decimal value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
         (Some(size), Some(RefNode::HexValue(n))) => {
@@ -160,12 +188,14 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 16)
-                    .map_err(|_e| "Could not parse hex value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
 
@@ -176,16 +206,21 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
                     .get_str(&s.nodes.0)
                     .unwrap()
                     .parse::<usize>()
-                    .map_err(|_e| "Could not parse size value as usize".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
                 let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 2)
-                    .map_err(|_e| "Could not parse binary value as u64".to_string())?;
+                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
                 Ok(Parameter::bitvec(size, val))
             } else {
-                Err("Size is missing".to_string())
+                Err(VerilogError::MissingRefNode(
+                    "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
+                ))
             }
         }
 
-        _ => Err("Siz type combination is not supported".to_string()),
+        _ => Err(VerilogError::Other(
+            None,
+            "Size type combination is not supported".to_string(),
+        )),
     }
 }
 
@@ -193,7 +228,7 @@ fn parse_literal_as_param(node: RefNode, ast: &sv_parser::SyntaxTree) -> Result<
 /// Type parameter I defines the primitive library to parse into.
 pub fn from_ast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
-) -> Result<Rc<Netlist<I>>, String> {
+) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::new("top".to_string());
     let mut output_set = HashSet::new();
     let mut multiple = false;
@@ -201,15 +236,22 @@ pub fn from_ast<I: Instantiable + FromId>(
 
     // Cell creation pass
     let mut last_gate: Option<NetRef<I>> = None;
+    let mut locs: Vec<Locate> = Vec::new();
     for node_event in ast.into_iter().event() {
         match node_event {
+            // Track last location for error reporting
+            NodeEvent::Enter(RefNode::Locate(loc)) => {
+                locs.push(*loc);
+            }
+
             // Hande module definition
             NodeEvent::Enter(RefNode::ModuleDeclarationAnsi(decl)) => {
                 if multiple {
-                    return Err(
+                    return Err(VerilogError::Other(
+                        locs.last().cloned(),
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
-                    );
+                    ));
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();
@@ -220,10 +262,11 @@ pub fn from_ast<I: Instantiable + FromId>(
 
             NodeEvent::Enter(RefNode::ModuleDeclarationNonansi(decl)) => {
                 if multiple {
-                    return Err(
+                    return Err(VerilogError::Other(
+                        locs.last().cloned(),
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
-                    );
+                    ));
                 }
 
                 let id = unwrap_node!(decl, ModuleIdentifier).unwrap();
@@ -238,8 +281,9 @@ pub fn from_ast<I: Instantiable + FromId>(
                 let mod_name = get_identifier(id, ast)?;
                 let id = unwrap_node!(inst, InstanceIdentifier).unwrap();
                 let inst_name = get_identifier(id, ast)?;
-                let instantiable = I::from_id(&mod_name)?;
-                last_gate = Some(netlist.insert_gate_disconnected(instantiable, inst_name)?);
+                let instantiable = I::from_id(&mod_name)
+                    .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
+                last_gate = Some(netlist.insert_gate_disconnected(instantiable, inst_name));
             }
 
             // Handle instance parameters
@@ -291,21 +335,30 @@ pub fn from_ast<I: Instantiable + FromId>(
 
                             drivers.insert(arg_name, oport);
                         } else if gate.find_input(&port_name).is_none() {
-                            return Err(format!(
-                                "Could not find port {} on instance {}",
-                                port_name,
-                                gate.get_instance_name().unwrap()
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!(
+                                    "Could not find port {} on instance {}",
+                                    port_name,
+                                    gate.get_instance_name().unwrap()
+                                ),
                             ));
                         }
                     }
                     None => {
                         if gate.find_output(&port_name).is_some() {
-                            return Err("Cannot drive a constant from an output port".to_string());
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                "Cannot drive a constant from an output port".to_string(),
+                            ));
                         } else if gate.find_input(&port_name).is_some() {
                             let literal = unwrap_node!(arg, PrimaryLiteral);
                             if literal.is_none() {
-                                return Err(format!(
-                                    "Expected a literal for connection on port {port_name}"
+                                return Err(VerilogError::Other(
+                                    locs.last().cloned(),
+                                    format!(
+                                        "Expected a literal for connection on port {port_name}"
+                                    ),
                                 ));
                             }
                             let value = parse_literal_as_logic(literal.unwrap(), ast)?;
@@ -313,20 +366,27 @@ pub fn from_ast<I: Instantiable + FromId>(
                             let val_name = &"const".into()
                                 + &gate.get_instance_name().unwrap()
                                 + port_name.clone();
-                            let driverless = netlist.insert_constant(
-                                value,
-                                Identifier::new("const_inst".to_string())
-                                    + gate.get_instance_name().unwrap()
-                                    + port_name,
-                            )?;
+                            let driverless = netlist
+                                .insert_constant(
+                                    value,
+                                    Identifier::new("const_inst".to_string())
+                                        + gate.get_instance_name().unwrap()
+                                        + port_name,
+                                )
+                                .map_err(|e| {
+                                    VerilogError::SafetyNetError(locs.last().cloned(), e)
+                                })?;
 
                             driverless.as_net_mut().set_identifier(val_name.clone());
                             drivers.insert(val_name, driverless);
                         } else {
-                            return Err(format!(
-                                "Could not find port {} on instance {}",
-                                port_name,
-                                gate.get_instance_name().unwrap()
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!(
+                                    "Could not find port {} on instance {}",
+                                    port_name,
+                                    gate.get_instance_name().unwrap()
+                                ),
                             ));
                         }
                     }
@@ -336,7 +396,10 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Handle wire/net decl
             NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl)) => {
                 if unwrap_node!(net_decl, UnpackedDimension).is_some() {
-                    return Err("Only single bit nets are supported".to_string());
+                    return Err(VerilogError::Other(
+                        locs.last().cloned(),
+                        "Only single bit nets are supported".to_string(),
+                    ));
                 }
             }
 
@@ -355,11 +418,17 @@ pub fn from_ast<I: Instantiable + FromId>(
                         let loc = sym.nodes.0;
                         let eq = ast.get_str(&loc).unwrap();
                         if eq != "=" {
-                            return Err(format!("Expected an assignment operator, got {eq}"));
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!("Expected an assignment operator, got {eq}"),
+                            ));
                         }
                     }
                     _ => {
-                        return Err("Expected an assignment operator".to_string());
+                        return Err(VerilogError::Other(
+                            locs.last().cloned(),
+                            "Expected an assignment operator".to_string(),
+                        ));
                     }
                 }
 
@@ -367,7 +436,9 @@ pub fn from_ast<I: Instantiable + FromId>(
                 if matches!(rhs_id, RefNode::PrimaryLiteral(_)) {
                     let val = parse_literal_as_logic(rhs_id, ast)?;
                     let id = lhs_id.clone() + Identifier::new("const_logic".to_string());
-                    let net = netlist.insert_constant(val, id.clone())?;
+                    let net = netlist
+                        .insert_constant(val, id.clone())
+                        .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
                     last_gate = Some(net.clone().unwrap());
                     eprintln!("Inserted constant net {id}");
                     drivers.insert(lhs_id, net);
@@ -376,19 +447,34 @@ pub fn from_ast<I: Instantiable + FromId>(
 
             // The stuff we definitely don't support
             NodeEvent::Enter(RefNode::BinaryOperator(_)) => {
-                return Err("Binary operators are not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Binary operators are not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::UnaryOperator(_)) => {
-                return Err("Unary operators are not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Unary operators are not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::Concatenation(_)) => {
-                return Err("Concatenation not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Concatenation not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::AlwaysConstruct(_)) => {
-                return Err("Always block not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Always block not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::ConditionalStatement(_)) => {
-                return Err("If/else block not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "If/else block not supported".to_string(),
+                ));
             }
             _ => (),
         }
@@ -424,12 +510,18 @@ pub fn from_ast<I: Instantiable + FromId>(
         }
     }
 
+    locs.clear();
     {
         // Final wiring pass
         let mut iter = netlist.objects();
         let mut gate = None;
         for node_event in ast.into_iter().event() {
             match node_event {
+                // Track last location for error reporting
+                NodeEvent::Enter(RefNode::Locate(loc)) => {
+                    locs.push(*loc);
+                }
+
                 NodeEvent::Enter(RefNode::ModuleInstantiation(_))
                 | NodeEvent::Enter(RefNode::InputDeclarationNet(_)) => {
                     gate = iter.next();
@@ -457,6 +549,11 @@ pub fn from_ast<I: Instantiable + FromId>(
                                 let arg_name = get_identifier(n, ast)?;
                                 if let Some(d) = drivers.get(&arg_name) {
                                     iport.connect(d.clone());
+                                } else {
+                                    return Err(VerilogError::Other(
+                                        locs.last().cloned(),
+                                        format!("{arg_name} is not a valid driver"),
+                                    ));
                                 }
                             }
                             None => {

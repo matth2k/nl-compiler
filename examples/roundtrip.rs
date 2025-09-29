@@ -86,7 +86,7 @@ impl Instantiable for Gate {
 }
 
 impl FromId for Gate {
-    fn from_id(s: &Identifier) -> Result<Self, String> {
+    fn from_id(s: &Identifier) -> Result<Self, safety_net::error::Error> {
         match s.to_string().as_str() {
             "AND" => Ok(Gate {
                 name: s.clone(),
@@ -185,7 +185,10 @@ impl FromId for Gate {
                 outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
-            _ => Err(format!("Unknown primitive gate: {}", s)),
+            _ => Err(safety_net::error::Error::ParseError(format!(
+                "Unknown primitive gate: {}",
+                s
+            ))),
         }
     }
 }
