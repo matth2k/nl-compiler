@@ -25,11 +25,11 @@ pub enum VerilogError {
     #[error("Missing RefNode `{0}`")]
     MissingRefNode(String),
     /// An error originating from `safety-net`.
-    #[error("Safety net error `{0}`")]
-    SafetyNetError(#[from] safety_net::error::Error),
-    /// Any other error
-    #[error("Other error `{0}`")]
-    Other(String),
+    #[error(" `{1}` : {0:?}")]
+    SafetyNetError(Option<Locate>, safety_net::error::Error),
+    /// Any other compilation error
+    #[error(" `{1}` : {0:?}")]
+    Other(Option<Locate>, String),
 }
 
 /// Errors for AIG Compilation.

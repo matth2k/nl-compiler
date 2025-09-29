@@ -218,6 +218,7 @@ fn parse_literal_as_param(
         }
 
         _ => Err(VerilogError::Other(
+            None,
             "Size type combination is not supported".to_string(),
         )),
     }
@@ -235,12 +236,19 @@ pub fn from_ast<I: Instantiable + FromId>(
 
     // Cell creation pass
     let mut last_gate: Option<NetRef<I>> = None;
+    let mut locs: Vec<Locate> = Vec::new();
     for node_event in ast.into_iter().event() {
         match node_event {
+            // Track last location for error reporting
+            NodeEvent::Enter(RefNode::Locate(loc)) => {
+                locs.push(*loc);
+            }
+
             // Hande module definition
             NodeEvent::Enter(RefNode::ModuleDeclarationAnsi(decl)) => {
                 if multiple {
                     return Err(VerilogError::Other(
+                        locs.last().cloned(),
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
                     ));
@@ -255,6 +263,7 @@ pub fn from_ast<I: Instantiable + FromId>(
             NodeEvent::Enter(RefNode::ModuleDeclarationNonansi(decl)) => {
                 if multiple {
                     return Err(VerilogError::Other(
+                        locs.last().cloned(),
                         "Multiple module definitions in a single file are not supported"
                             .to_string(),
                     ));
@@ -272,8 +281,9 @@ pub fn from_ast<I: Instantiable + FromId>(
                 let mod_name = get_identifier(id, ast)?;
                 let id = unwrap_node!(inst, InstanceIdentifier).unwrap();
                 let inst_name = get_identifier(id, ast)?;
-                let instantiable = I::from_id(&mod_name)?;
-                last_gate = Some(netlist.insert_gate_disconnected(instantiable, inst_name)?);
+                let instantiable = I::from_id(&mod_name)
+                    .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
+                last_gate = Some(netlist.insert_gate_disconnected(instantiable, inst_name));
             }
 
             // Handle instance parameters
@@ -325,21 +335,30 @@ pub fn from_ast<I: Instantiable + FromId>(
 
                             drivers.insert(arg_name, oport);
                         } else if gate.find_input(&port_name).is_none() {
-                            return Err(format!(
-                                "Could not find port {} on instance {}",
-                                port_name,
-                                gate.get_instance_name().unwrap()
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!(
+                                    "Could not find port {} on instance {}",
+                                    port_name,
+                                    gate.get_instance_name().unwrap()
+                                ),
                             ));
                         }
                     }
                     None => {
                         if gate.find_output(&port_name).is_some() {
-                            return Err("Cannot drive a constant from an output port".to_string());
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                "Cannot drive a constant from an output port".to_string(),
+                            ));
                         } else if gate.find_input(&port_name).is_some() {
                             let literal = unwrap_node!(arg, PrimaryLiteral);
                             if literal.is_none() {
-                                return Err(format!(
-                                    "Expected a literal for connection on port {port_name}"
+                                return Err(VerilogError::Other(
+                                    locs.last().cloned(),
+                                    format!(
+                                        "Expected a literal for connection on port {port_name}"
+                                    ),
                                 ));
                             }
                             let value = parse_literal_as_logic(literal.unwrap(), ast)?;
@@ -347,20 +366,27 @@ pub fn from_ast<I: Instantiable + FromId>(
                             let val_name = &"const".into()
                                 + &gate.get_instance_name().unwrap()
                                 + port_name.clone();
-                            let driverless = netlist.insert_constant(
-                                value,
-                                Identifier::new("const_inst".to_string())
-                                    + gate.get_instance_name().unwrap()
-                                    + port_name,
-                            )?;
+                            let driverless = netlist
+                                .insert_constant(
+                                    value,
+                                    Identifier::new("const_inst".to_string())
+                                        + gate.get_instance_name().unwrap()
+                                        + port_name,
+                                )
+                                .map_err(|e| {
+                                    VerilogError::SafetyNetError(locs.last().cloned(), e)
+                                })?;
 
                             driverless.as_net_mut().set_identifier(val_name.clone());
                             drivers.insert(val_name, driverless);
                         } else {
-                            return Err(format!(
-                                "Could not find port {} on instance {}",
-                                port_name,
-                                gate.get_instance_name().unwrap()
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!(
+                                    "Could not find port {} on instance {}",
+                                    port_name,
+                                    gate.get_instance_name().unwrap()
+                                ),
                             ));
                         }
                     }
@@ -370,7 +396,10 @@ pub fn from_ast<I: Instantiable + FromId>(
             // Handle wire/net decl
             NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl)) => {
                 if unwrap_node!(net_decl, UnpackedDimension).is_some() {
-                    return Err("Only single bit nets are supported".to_string());
+                    return Err(VerilogError::Other(
+                        locs.last().cloned(),
+                        "Only single bit nets are supported".to_string(),
+                    ));
                 }
             }
 
@@ -389,11 +418,17 @@ pub fn from_ast<I: Instantiable + FromId>(
                         let loc = sym.nodes.0;
                         let eq = ast.get_str(&loc).unwrap();
                         if eq != "=" {
-                            return Err(format!("Expected an assignment operator, got {eq}"));
+                            return Err(VerilogError::Other(
+                                locs.last().cloned(),
+                                format!("Expected an assignment operator, got {eq}"),
+                            ));
                         }
                     }
                     _ => {
-                        return Err("Expected an assignment operator".to_string());
+                        return Err(VerilogError::Other(
+                            locs.last().cloned(),
+                            "Expected an assignment operator".to_string(),
+                        ));
                     }
                 }
 
@@ -401,7 +436,9 @@ pub fn from_ast<I: Instantiable + FromId>(
                 if matches!(rhs_id, RefNode::PrimaryLiteral(_)) {
                     let val = parse_literal_as_logic(rhs_id, ast)?;
                     let id = lhs_id.clone() + Identifier::new("const_logic".to_string());
-                    let net = netlist.insert_constant(val, id.clone())?;
+                    let net = netlist
+                        .insert_constant(val, id.clone())
+                        .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
                     last_gate = Some(net.clone().unwrap());
                     eprintln!("Inserted constant net {id}");
                     drivers.insert(lhs_id, net);
@@ -410,19 +447,34 @@ pub fn from_ast<I: Instantiable + FromId>(
 
             // The stuff we definitely don't support
             NodeEvent::Enter(RefNode::BinaryOperator(_)) => {
-                return Err("Binary operators are not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Binary operators are not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::UnaryOperator(_)) => {
-                return Err("Unary operators are not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Unary operators are not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::Concatenation(_)) => {
-                return Err("Concatenation not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Concatenation not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::AlwaysConstruct(_)) => {
-                return Err("Always block not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Always block not supported".to_string(),
+                ));
             }
             NodeEvent::Enter(RefNode::ConditionalStatement(_)) => {
-                return Err("If/else block not supported".to_string());
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "If/else block not supported".to_string(),
+                ));
             }
             _ => (),
         }
@@ -458,12 +510,18 @@ pub fn from_ast<I: Instantiable + FromId>(
         }
     }
 
+    locs.clear();
     {
         // Final wiring pass
         let mut iter = netlist.objects();
         let mut gate = None;
         for node_event in ast.into_iter().event() {
             match node_event {
+                // Track last location for error reporting
+                NodeEvent::Enter(RefNode::Locate(loc)) => {
+                    locs.push(*loc);
+                }
+
                 NodeEvent::Enter(RefNode::ModuleInstantiation(_))
                 | NodeEvent::Enter(RefNode::InputDeclarationNet(_)) => {
                     gate = iter.next();
@@ -491,6 +549,11 @@ pub fn from_ast<I: Instantiable + FromId>(
                                 let arg_name = get_identifier(n, ast)?;
                                 if let Some(d) = drivers.get(&arg_name) {
                                     iport.connect(d.clone());
+                                } else {
+                                    return Err(VerilogError::Other(
+                                        locs.last().cloned(),
+                                        format!("{arg_name} is not a valid driver"),
+                                    ));
                                 }
                             }
                             None => {
