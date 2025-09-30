@@ -2,6 +2,40 @@
 name = "nl-compiler"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+
+categories = [
+    "data-structures",
+    "compilers",
+    "science",
+]
+
+description = "AIG and Verilog frontend compilers"
+
+# documentation = "https://matth2k.github.io/safety-net/"
+# homepage = "https://matth2k.github.io/safety-net/"
+include = [
+    "Cargo.toml",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "README.md",
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "examples/**/*.rs",
+]
+
+keywords = [
+    "data-structures",
+    "eda",
+    "netlist",
+    "circuits",
+    "hardware",
+]
+
+readme = "README.md"
+
+
+# repository = "https://github.com/matth2k/nl-compiler"
 
 [dependencies]
 thiserror = { version = "2.0.16" }
