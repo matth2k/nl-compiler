@@ -341,7 +341,6 @@ fn bad_lut_name() {
     ));
 }
 
-
 #[test]
 fn bad_lut_input() {
     let src = "module lut_test (
@@ -375,8 +374,5 @@ fn bad_lut_input() {
     let r = compile(&src);
     assert!(r.is_err());
     let e = r.err().unwrap();
-    assert!(matches!(
-        e,
-        VerilogError::Other(_, _)
-    ));
+    assert!(matches!(e, VerilogError::Other(_, _)));
 }
