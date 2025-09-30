@@ -33,7 +33,7 @@ Save the above file to `and.v`.
 
 `cargo run --example roundtrip -- and.v`
 
-Also, take a looks at some of the [tests](https://github.com/matth2k/nl-compiler/blob/main/tests/verilog.rs):
+Also, take a look at some of the [tests](https://github.com/matth2k/nl-compiler/blob/main/tests/verilog.rs):
 
 ```rust
 #[test]
