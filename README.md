@@ -6,7 +6,6 @@
 
 Below is a minimal example to get you started:
 
-
 ```verilog
 module and_test (
     a,
