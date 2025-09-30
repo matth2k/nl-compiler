@@ -27,6 +27,9 @@ pub enum VerilogError {
     /// An error originating from `safety-net`.
     #[error(" `{1}` : {0:?}")]
     SafetyNetError(Option<Locate>, safety_net::error::Error),
+    /// An error originating from `sv-parser`.
+    #[error("{0:?}")]
+    ParserError(#[from] sv_parser::Error),
     /// Any other compilation error
     #[error(" `{1}` : {0:?}")]
     Other(Option<Locate>, String),

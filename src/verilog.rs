@@ -517,7 +517,12 @@ pub fn from_ast<I: Instantiable + FromId>(
                         continue;
                     }
                     let alias = drivers[&rhs_id].clone();
+
+                    if output_set.contains(&lhs_id) {
+                        netlist.expose_net_with_name(alias.clone(), lhs_id.clone());
+                    }
                     drivers.insert(lhs_id, alias);
+
                     changing = true;
                 }
             }
