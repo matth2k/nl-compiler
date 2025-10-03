@@ -376,3 +376,42 @@ fn bad_lut_input() {
     let e = r.err().unwrap();
     assert!(matches!(e, VerilogError::Other(_, _)));
 }
+
+#[test]
+fn assignment_chain() {
+    let src = "module lut_test (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+                         wire tmp1;
+                         wire tmp2;
+                       
+                         assign tmp1 = a;
+                         assign tmp2 = tmp1;
+                         assign y = tmp2;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let comp = "module lut_test (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+                       
+                         assign y = a;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(comp, roundtrip(&src).unwrap());
+}
