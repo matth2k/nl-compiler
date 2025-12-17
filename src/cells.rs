@@ -4,10 +4,11 @@
 
 */
 
-use safety_net::error::Error;
+use safety_net::Error;
+use safety_net::Identifier;
 
 /// A trait to specify how to map primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
 pub trait FromId: Sized {
     /// Maps primitive instantiation names ([Identifier]s) to the instance [Instantiable] type.
-    fn from_id(s: &safety_net::circuit::Identifier) -> Result<Self, Error>;
+    fn from_id(s: &Identifier) -> Result<Self, Error>;
 }

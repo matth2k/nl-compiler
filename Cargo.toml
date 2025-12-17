@@ -39,7 +39,7 @@ readme = "README.md"
 
 [dependencies]
 thiserror = { version = "2.0.16" }
-safety-net = { version = "0.2.10", features = ["graph"] }
+safety-net = { version = "0.3.0", features = ["graph"] }
 sv-parser = { version = "0.13.3" }
 flussab-aiger = { version = "0.1.1" }
 

@@ -6,10 +6,7 @@
 
 use crate::error::AigError;
 use flussab_aiger::aig::Aig;
-use safety_net::{
-    circuit::{Identifier, Instantiable, Net},
-    netlist::{DrivenNet, Netlist},
-};
+use safety_net::{DrivenNet, Identifier, Instantiable, Net, Netlist};
 use std::{collections::HashMap, rc::Rc};
 
 /// The index type for the AIG

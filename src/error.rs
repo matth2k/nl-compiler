@@ -26,7 +26,7 @@ pub enum VerilogError {
     MissingRefNode(String),
     /// An error originating from `safety-net`.
     #[error(" `{1}` : {0:?}")]
-    SafetyNetError(Option<Locate>, safety_net::error::Error),
+    SafetyNetError(Option<Locate>, safety_net::Error),
     /// An error originating from `sv-parser`.
     #[error("{0:?}")]
     ParserError(#[from] sv_parser::Error),
@@ -46,5 +46,5 @@ pub enum AigError {
     ContainsLatches(Vec<U>),
     /// An error originating from `safety-net`.
     #[error("Safety net error `{0}`")]
-    SafetyNetError(#[from] safety_net::error::Error),
+    SafetyNetError(#[from] safety_net::Error),
 }

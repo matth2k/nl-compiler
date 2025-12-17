@@ -1,11 +1,5 @@
 use nl_compiler::{cells::FromId, error::VerilogError, verilog};
-use safety_net::{
-    assert_verilog_eq,
-    attribute::Parameter,
-    circuit::{Identifier, Instantiable, Net},
-    logic::Logic,
-    netlist::Netlist,
-};
+use safety_net::{Identifier, Instantiable, Logic, Net, Netlist, Parameter, assert_verilog_eq};
 use std::{collections::HashMap, path::Path, rc::Rc};
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
@@ -76,10 +70,14 @@ impl Instantiable for Gate {
             _ => None,
         }
     }
+
+    fn is_seq(&self) -> bool {
+        false
+    }
 }
 
 impl FromId for Gate {
-    fn from_id(s: &Identifier) -> Result<Self, safety_net::error::Error> {
+    fn from_id(s: &Identifier) -> Result<Self, safety_net::Error> {
         match s.to_string().as_str() {
             "AND" => Ok(Gate {
                 name: s.clone(),
@@ -178,7 +176,7 @@ impl FromId for Gate {
                 outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
-            _ => Err(safety_net::error::Error::ParseError(format!(
+            _ => Err(safety_net::Error::ParseError(format!(
                 "Unknown primitive gate: {}",
                 s
             ))),
@@ -337,7 +335,7 @@ fn bad_lut_name() {
     let e = r.err().unwrap();
     assert!(matches!(
         e,
-        VerilogError::SafetyNetError(_, safety_net::error::Error::ParseError(_))
+        VerilogError::SafetyNetError(_, safety_net::Error::ParseError(_))
     ));
 }
 
