@@ -8,12 +8,8 @@ use clap::Parser;
 use nl_compiler::cells::FromId;
 use nl_compiler::verilog::{self};
 #[cfg(feature = "serde")]
-use safety_net::netlist::serde::netlist_serialize;
-use safety_net::{
-    attribute::Parameter,
-    circuit::{Identifier, Instantiable, Net},
-    logic::Logic,
-};
+use safety_net::serde::netlist_serialize;
+use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
 #[derive(Debug, Clone)]
@@ -83,10 +79,14 @@ impl Instantiable for Gate {
             _ => None,
         }
     }
+
+    fn is_seq(&self) -> bool {
+        false
+    }
 }
 
 impl FromId for Gate {
-    fn from_id(s: &Identifier) -> Result<Self, safety_net::error::Error> {
+    fn from_id(s: &Identifier) -> Result<Self, safety_net::Error> {
         match s.to_string().as_str() {
             "AND" => Ok(Gate {
                 name: s.clone(),
@@ -185,7 +185,7 @@ impl FromId for Gate {
                 outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
-            _ => Err(safety_net::error::Error::ParseError(format!(
+            _ => Err(safety_net::Error::ParseError(format!(
                 "Unknown primitive gate: {}",
                 s
             ))),
@@ -257,7 +257,7 @@ fn main() -> std::io::Result<()> {
 
     eprintln!("{netlist}");
     let analysis = netlist
-        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
+        .get_analysis::<safety_net::MultiDiGraph<_>>()
         .unwrap();
     let graph = analysis.get_graph();
     let dot = petgraph::dot::Dot::with_config(graph, &[]);

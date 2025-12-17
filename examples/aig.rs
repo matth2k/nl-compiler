@@ -4,12 +4,8 @@ use clap::Parser;
 use flussab_aiger::ascii;
 use nl_compiler::aig::{self};
 #[cfg(feature = "serde")]
-use safety_net::netlist::serde::netlist_serialize;
-use safety_net::{
-    attribute::Parameter,
-    circuit::{Identifier, Instantiable, Net},
-    logic::Logic,
-};
+use safety_net::serde::netlist_serialize;
+use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
 #[derive(Debug, Clone)]
@@ -79,6 +75,10 @@ impl Instantiable for Gate {
             _ => None,
         }
     }
+
+    fn is_seq(&self) -> bool {
+        false
+    }
 }
 
 fn and() -> Gate {
@@ -147,7 +147,7 @@ fn main() -> std::io::Result<()> {
 
     eprintln!("{netlist}");
     let analysis = netlist
-        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
+        .get_analysis::<safety_net::MultiDiGraph<_>>()
         .unwrap();
     let graph = analysis.get_graph();
     let dot = petgraph::dot::Dot::with_config(graph, &[]);

@@ -10,12 +10,7 @@ use std::{
 };
 
 use crate::{cells::FromId, error::VerilogError};
-use safety_net::{
-    attribute::Parameter,
-    circuit::{Identifier, Instantiable, Net},
-    logic::Logic,
-    netlist::{DrivenNet, NetRef, Netlist},
-};
+use safety_net::{DrivenNet, Identifier, Instantiable, Logic, Net, NetRef, Netlist, Parameter};
 use sv_parser::{Locate, NodeEvent, RefNode, unwrap_node};
 
 /// From a AST node, read in the identifier from the source location
