@@ -100,7 +100,7 @@ impl FromId for Gate {
                 outputs: vec!["Y".into()],
                 params: HashMap::new(),
             }),
-            "NOT" => Ok(Gate {
+            "NOT" | "INV" => Ok(Gate {
                 name: s.clone(),
                 inputs: vec!["A".into()],
                 outputs: vec!["Y".into()],
