@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use clap::Parser;
 use flussab_aiger::ascii;
-use nl_compiler::aig::{self};
+use nl_compiler::from_aig;
 #[cfg(feature = "serde")]
 use safety_net::serde::netlist_serialize;
 use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
@@ -133,7 +133,7 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let netlist = aig::from_aig::<Gate>(&aig, and(), inv()).map_err(std::io::Error::other)?;
+    let netlist = from_aig::<Gate>(&aig, and(), inv()).map_err(std::io::Error::other)?;
 
     netlist.verify().map_err(std::io::Error::other)?;
 

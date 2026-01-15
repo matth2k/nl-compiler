@@ -7,7 +7,12 @@
 An experimental library for HDL frontends that can compile to [safety-net](https://crates.io/crates/safety-net) netlists.
 
 */
-pub mod aig;
-pub mod cells;
-pub mod error;
-pub mod verilog;
+mod aig;
+mod cells;
+mod error;
+mod verilog;
+
+pub use aig::{U, from_aig, to_aig, write_aig};
+pub use cells::FromId;
+pub use error::{AigError, VerilogError};
+pub use verilog::from_vast;

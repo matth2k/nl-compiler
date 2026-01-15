@@ -235,7 +235,7 @@ fn parse_literal_as_param(
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
 /// Type parameter I defines the primitive library to parse into.
-pub fn from_ast<I: Instantiable + FromId>(
+pub fn from_vast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::new("top".to_string());

@@ -5,7 +5,7 @@ use std::{
 };
 
 use clap::Parser;
-use nl_compiler::{aig, cells::FromId, error::AigError, verilog};
+use nl_compiler::{AigError, FromId, from_vast, to_aig, write_aig};
 #[cfg(feature = "serde")]
 use safety_net::serde::netlist_serialize;
 use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
@@ -259,7 +259,7 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let netlist = verilog::from_ast::<Gate>(&ast).map_err(std::io::Error::other)?;
+    let netlist = from_vast::<Gate>(&ast).map_err(std::io::Error::other)?;
 
     netlist.verify().map_err(std::io::Error::other)?;
 
@@ -270,10 +270,10 @@ fn main() -> std::io::Result<()> {
     }
 
     if args.convert_aig {
-        let aig = aig::to_aig(&netlist, |g| g.is_and(), |g| g.is_inverter())
-            .map_err(std::io::Error::other)?;
+        let aig =
+            to_aig(&netlist, |g| g.is_and(), |g| g.is_inverter()).map_err(std::io::Error::other)?;
 
-        aig::write_aig(&aig, std::io::stdout().lock()).map_err(|e| match e {
+        write_aig(&aig, std::io::stdout().lock()).map_err(|e| match e {
             AigError::IoError(ioe) => ioe,
             _ => std::io::Error::other(e),
         })?;

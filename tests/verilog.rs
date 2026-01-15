@@ -1,4 +1,4 @@
-use nl_compiler::{cells::FromId, error::VerilogError, verilog};
+use nl_compiler::{FromId, VerilogError, from_vast};
 use safety_net::{Identifier, Instantiable, Logic, Net, Netlist, Parameter, assert_verilog_eq};
 use std::{collections::HashMap, path::Path, rc::Rc};
 
@@ -188,7 +188,7 @@ fn compile(src: &str) -> Result<Rc<Netlist<Gate>>, VerilogError> {
     let incl: Vec<std::path::PathBuf> = vec![];
     let path = Path::new("top.v").to_path_buf();
     let (ast, _) = sv_parser::parse_sv_str(src, path, &HashMap::new(), &incl, true, false)?;
-    verilog::from_ast(&ast)
+    from_vast(&ast)
 }
 
 fn roundtrip(src: &str) -> Result<String, VerilogError> {
