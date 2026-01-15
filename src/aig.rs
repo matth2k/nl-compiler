@@ -95,7 +95,7 @@ pub fn write_aig<'a>(aig: &Aig<U>, output: impl Write + 'a) -> Result<(), AigErr
 }
 
 fn topo_sort_iter<I: Instantiable>(
-    netlist: &Rc<Netlist<I>>,
+    netlist: &Netlist<I>,
     item: DrivenNet<I>,
     sorted: &mut Vec<DrivenNet<I>>,
     rdy: &mut HashSet<DrivenNet<I>>,
@@ -133,7 +133,7 @@ fn topo_sort_iter<I: Instantiable>(
     Ok(())
 }
 
-fn topo_sort<I: Instantiable>(netlist: &Rc<Netlist<I>>) -> Result<Vec<DrivenNet<I>>, AigError> {
+fn topo_sort<I: Instantiable>(netlist: &Netlist<I>) -> Result<Vec<DrivenNet<I>>, AigError> {
     let mut sorted = Vec::new();
     let mut rdy = HashSet::new();
 

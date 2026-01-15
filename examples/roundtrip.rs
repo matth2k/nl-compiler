@@ -265,6 +265,7 @@ fn main() -> std::io::Result<()> {
 
     #[cfg(feature = "serde")]
     if args.serialize {
+        let netlist = netlist.reclaim().unwrap();
         netlist_serialize(netlist, std::io::stdout()).map_err(std::io::Error::other)?;
         return Ok(());
     }
@@ -280,8 +281,6 @@ fn main() -> std::io::Result<()> {
 
         return Ok(());
     }
-
-    let netlist = netlist.reclaim().unwrap();
 
     eprintln!("{netlist}");
     let analysis = netlist
