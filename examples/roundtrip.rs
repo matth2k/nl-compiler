@@ -5,12 +5,7 @@ use std::{
 };
 
 use clap::Parser;
-use nl_compiler::{
-    aig,
-    cells::FromId,
-    error::AigError,
-    verilog::{self},
-};
+use nl_compiler::{aig, cells::FromId, error::AigError, verilog};
 #[cfg(feature = "serde")]
 use safety_net::serde::netlist_serialize;
 use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
