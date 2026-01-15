@@ -44,7 +44,22 @@ pub enum AigError {
     /// Contains latches.
     #[error("Contains latches `{0:?}`")]
     ContainsLatches(Vec<U>),
+    /// Attempted aig contains cycles.
+    #[error("Attempted aig contains cycles")]
+    ContainsCycle,
+    /// Attempted aig contains gates besides AND and INV.
+    #[error("Attempted aig contains gates besides AND and INV")]
+    ContainsOtherGates,
+    /// Attempted aig has disconnected gates.
+    #[error("Attempted aig has disconnected gates.")]
+    DisconnectedGates,
     /// An error originating from `safety-net`.
     #[error("Safety net error `{0}`")]
     SafetyNetError(#[from] safety_net::Error),
+    /// An error originating from `flussab`.
+    #[error("flussab error `{0}`")]
+    FlussabError(#[from] flussab_aiger::aig::AigStructureError<crate::aig::U>),
+    /// An error originating from `io`.
+    #[error("IO error `{0}`")]
+    IoError(#[from] std::io::Error),
 }

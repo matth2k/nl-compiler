@@ -41,6 +41,7 @@ readme = "README.md"
 thiserror = { version = "2.0.16" }
 safety-net = { version = "0.3.0", features = ["graph"] }
 sv-parser = { version = "0.13.3" }
+flussab = { version = "0.3.1" }
 flussab-aiger = { version = "0.1.1" }
 
 [dev-dependencies]

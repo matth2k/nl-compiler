@@ -5,8 +5,12 @@ use std::{
 };
 
 use clap::Parser;
-use nl_compiler::cells::FromId;
-use nl_compiler::verilog::{self};
+use nl_compiler::{
+    aig,
+    cells::FromId,
+    error::AigError,
+    verilog::{self},
+};
 #[cfg(feature = "serde")]
 use safety_net::serde::netlist_serialize;
 use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
@@ -193,6 +197,20 @@ impl FromId for Gate {
     }
 }
 
+impl Gate {
+    /// Returns true if the gate is an inverter
+    fn is_inverter(&self) -> bool {
+        let name = self.get_name().to_string();
+        name == "NOT" || name == "INV" || name == "INV_X1"
+    }
+
+    /// Returns true if the gate is an AND gate
+    fn is_and(&self) -> bool {
+        let name = self.get_name().to_string();
+        name == "AND" || name == "AND2_X1"
+    }
+}
+
 /// Parse structural verilog
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -202,6 +220,9 @@ struct Args {
     /// Dump ast
     #[arg(short = 'd', long, default_value_t = false)]
     dump_ast: bool,
+    /// Write output as an AIG
+    #[arg(short = 'c', long, default_value_t = false)]
+    convert_aig: bool,
     /// Serialize
     #[cfg(feature = "serde")]
     #[arg(short = 's', long, default_value_t = false)]
@@ -247,13 +268,25 @@ fn main() -> std::io::Result<()> {
 
     netlist.verify().map_err(std::io::Error::other)?;
 
-    let netlist = netlist.reclaim().unwrap();
-
     #[cfg(feature = "serde")]
     if args.serialize {
         netlist_serialize(netlist, std::io::stdout()).map_err(std::io::Error::other)?;
         return Ok(());
     }
+
+    if args.convert_aig {
+        let aig = aig::to_aig(&netlist, |g| g.is_and(), |g| g.is_inverter())
+            .map_err(std::io::Error::other)?;
+
+        aig::write_aig(&aig, std::io::stdout().lock()).map_err(|e| match e {
+            AigError::IoError(ioe) => ioe,
+            _ => std::io::Error::other(e),
+        })?;
+
+        return Ok(());
+    }
+
+    let netlist = netlist.reclaim().unwrap();
 
     eprintln!("{netlist}");
     let analysis = netlist
