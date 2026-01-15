@@ -16,6 +16,7 @@ documentation = "https://matth2k.github.io/safety-net/"
 homepage = "https://matth2k.github.io/safety-net/"
 include = [
     "Cargo.toml",
+    "clippy.toml",
     "LICENSE-MIT",
     "LICENSE-APACHE",
     "README.md",
