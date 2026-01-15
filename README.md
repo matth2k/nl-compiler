@@ -1,4 +1,6 @@
 ![](https://github.com/matth2k/nl-compiler/actions/workflows/rust.yml/badge.svg)
+[![Docs](https://img.shields.io/badge/docs-github--pages-blue)](https://matth2k.github.io/nl-compiler/)
+[![crates.io](https://img.shields.io/badge/crates.io-github--pages-blue)](https://crates.io/crates/nl-compiler)
 
 # `nl-compiler`: Frontend Compiler for [Safety-Net](https://github.com/matth2k/safety-net)
 
