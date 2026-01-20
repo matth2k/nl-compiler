@@ -91,10 +91,16 @@ impl FromId for Gate {
                 outputs: vec!["Y".into()],
                 params: HashMap::new(),
             }),
-            "NOT" | "INV" => Ok(Gate {
+            "NOT" => Ok(Gate {
                 name: s.clone(),
                 inputs: vec!["A".into()],
                 outputs: vec!["Y".into()],
+                params: HashMap::new(),
+            }),
+            "INV" => Ok(Gate {
+                name: s.clone(),
+                inputs: vec!["A".into()],
+                outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
             "LUT1" => Ok(Gate {
@@ -412,4 +418,38 @@ fn assignment_chain() {
     .to_string();
 
     assert_verilog_eq!(comp, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn reg() {
+    let src = "module reg_test (
+                           clk,
+                           d,
+                           rst,
+                           y
+                       );
+                         input clk;
+                         wire clk;
+                         input d;
+                         wire d;
+                         input rst;
+                         wire rst;
+                         output y;
+                         wire y;
+                         
+                         FDRE #(
+                             .INIT(1'b1)
+                         ) _0_ (
+                             .C(clk),
+                             .CE(1'b1),
+                             .D(d),
+                             .R(1'b0),
+                             .Q(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
 }
