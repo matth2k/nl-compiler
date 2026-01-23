@@ -235,8 +235,10 @@ fn parse_literal_as_param(
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
 /// Type parameter I defines the primitive library to parse into.
-pub fn from_vast<I: Instantiable + FromId>(
+/// You can provide a closure `overrides` to modify each instantiated cell after creation.
+pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>>(
     ast: &sv_parser::SyntaxTree,
+    overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::new("top".to_string());
     let mut output_set = HashSet::new();
@@ -290,8 +292,12 @@ pub fn from_vast<I: Instantiable + FromId>(
                 let mod_name = get_identifier(id, ast)?;
                 let id = unwrap_node!(inst, InstanceIdentifier).unwrap();
                 let inst_name = get_identifier(id, ast)?;
-                let instantiable = I::from_id(&mod_name)
+                let base_inst = I::from_id(&mod_name)
                     .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
+                let instantiable = match overrides(&mod_name, &base_inst) {
+                    Some(overridden) => overridden,
+                    None => base_inst,
+                };
                 last_gate = Some(netlist.insert_gate_disconnected(instantiable, inst_name));
             }
 
@@ -587,4 +593,12 @@ pub fn from_vast<I: Instantiable + FromId>(
     }
 
     Ok(netlist)
+}
+
+/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Type parameter I defines the primitive library to parse into.
+pub fn from_vast<I: Instantiable + FromId>(
+    ast: &sv_parser::SyntaxTree,
+) -> Result<Rc<Netlist<I>>, VerilogError> {
+    from_vast_overrides::<I, _>(ast, |_, _| None)
 }
