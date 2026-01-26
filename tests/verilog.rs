@@ -274,6 +274,30 @@ fn passthru() {
 }
 
 #[test]
+fn multiple_exports() {
+    let src = "module passthru (
+                           b,
+                           y,
+                           z
+                       );
+                         input b;
+                         wire b;
+                         output y;
+                         wire y;
+                         output z;
+                         wire z;
+                       
+                         assign y = b;
+                         assign z = b;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
 fn mux_lut() {
     let src = "module lut_test (
                            a,
