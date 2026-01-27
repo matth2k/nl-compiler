@@ -315,7 +315,7 @@ fn mux_lut() {
                          wire y;
                        
                          LUT3 #(
-                             .INIT(8'b11001010)
+                             .INIT(8'hca)
                          ) _0_ (
                              .I0(a),
                              .I1(b),
