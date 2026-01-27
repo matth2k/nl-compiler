@@ -477,3 +477,25 @@ fn reg() {
 
     assert_verilog_eq!(src, roundtrip(&src).unwrap());
 }
+
+#[test]
+fn const_output() {
+    let src = "module const_output (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+                         output z;
+                         wire z;
+                         
+                         assign y = 1'b0;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}

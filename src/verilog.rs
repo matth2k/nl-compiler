@@ -455,7 +455,9 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
                         .insert_constant(val, id.clone())
                         .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
                     last_gate = Some(net.clone().unwrap());
-                    eprintln!("Inserted constant net {id}");
+                    if output_set.contains(&lhs_id) {
+                        netlist.expose_net_with_name(net.clone(), lhs_id.clone());
+                    }
                     drivers.insert(lhs_id, net);
                 }
             }
