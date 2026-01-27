@@ -8,7 +8,7 @@ use clap::Parser;
 use nl_compiler::{AigError, FromId, from_vast, to_aig, write_aig};
 #[cfg(feature = "serde")]
 use safety_net::serde::netlist_serialize;
-use safety_net::{Identifier, Instantiable, Logic, Net, Parameter};
+use safety_net::{Identifier, Instantiable, Logic, Net, Netlist, Parameter, format_id};
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
 #[derive(Debug, Clone)]
@@ -221,6 +221,9 @@ struct Args {
     /// Dump ast
     #[arg(short = 'd', long, default_value_t = false)]
     dump_ast: bool,
+    /// Rename the nets with Lorem ipsum
+    #[arg(short = 'i', long, default_value_t = false)]
+    ipsum: bool,
     /// Write output as an AIG
     #[arg(short = 'c', long, default_value_t = false)]
     convert_aig: bool,
@@ -241,6 +244,27 @@ fn sv_parse_wrapper(
         Ok((ast, _defs)) => Ok(ast),
         Err(e) => Err(e),
     }
+}
+
+/// Rename nets and instances in the netlist with Lorem ipsum
+fn ipsum_nl(netlist: &Netlist<Gate>) -> std::io::Result<()> {
+    let mut chain = lipsum::MarkovChain::new();
+    chain.learn(lipsum::LOREM_IPSUM);
+    chain.learn(lipsum::LIBER_PRIMUS);
+    let l = netlist.len() * 3;
+    let mut txt: Vec<_> = chain
+        .iter_with_rng(rand::thread_rng())
+        .filter(|w| !w.contains("alias") && !w.contains(":"))
+        .take(l)
+        .collect();
+    txt.sort();
+    txt.dedup();
+    if txt.len() > netlist.len() {
+        netlist
+            .rename_nets(|i| format_id!("{}", txt[i]))
+            .map_err(std::io::Error::other)?;
+    }
+    Ok(())
 }
 
 fn main() -> std::io::Result<()> {
@@ -268,6 +292,10 @@ fn main() -> std::io::Result<()> {
     let netlist = from_vast::<Gate>(&ast).map_err(std::io::Error::other)?;
 
     netlist.verify().map_err(std::io::Error::other)?;
+
+    if args.ipsum {
+        ipsum_nl(&netlist)?;
+    }
 
     #[cfg(feature = "serde")]
     if args.serialize {
