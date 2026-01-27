@@ -488,8 +488,6 @@ fn const_output() {
                          wire a;
                          output y;
                          wire y;
-                         output z;
-                         wire z;
                          
                          assign y = 1'b0;
                        

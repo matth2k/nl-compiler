@@ -533,6 +533,20 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     }
 
     locs.clear();
+
+    // Handle undriven outputs
+    for output in output_set.iter() {
+        if !drivers.contains_key(output) {
+            let inst =
+                I::from_constant(Logic::X).unwrap_or(I::from_constant(Logic::False).unwrap());
+            let id = output.clone() + Identifier::new("const_logic".to_string());
+            let net = netlist
+                .insert_gate(inst, id, &[])
+                .map_err(|e| VerilogError::SafetyNetError(locs.last().cloned(), e))?;
+            netlist.expose_net_with_name(net.clone().into(), output.clone());
+        }
+    }
+
     {
         // Final wiring pass
         let mut iter = netlist.objects();
