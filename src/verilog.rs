@@ -198,9 +198,24 @@ fn parse_literal_as_param(
                     .unwrap()
                     .parse::<usize>()
                     .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
-                let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 16)
-                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
-                Ok(Parameter::bitvec(size, val))
+                if size == 1 {
+                    Ok(Parameter::logic(match ast.get_str(&n.nodes.0).unwrap() {
+                        "0" => false.into(),
+                        "1" => true.into(),
+                        "x" | "X" => Logic::X,
+                        "z" | "Z" => Logic::Z,
+                        _ => {
+                            return Err(VerilogError::Other(
+                                Some(n.nodes.0),
+                                "Invalid 1-bit hex value".to_string(),
+                            ));
+                        }
+                    }))
+                } else {
+                    let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 16)
+                        .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
+                    Ok(Parameter::bitvec(size, val))
+                }
             } else {
                 Err(VerilogError::MissingRefNode(
                     "Expected a NonZeroUnsignedNumber for the literal size".to_string(),
@@ -216,9 +231,24 @@ fn parse_literal_as_param(
                     .unwrap()
                     .parse::<usize>()
                     .map_err(|e| VerilogError::ParseIntError(e, s.nodes.0))?;
-                let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 2)
-                    .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
-                Ok(Parameter::bitvec(size, val))
+                if size == 1 {
+                    Ok(Parameter::logic(match ast.get_str(&n.nodes.0).unwrap() {
+                        "0" => false.into(),
+                        "1" => true.into(),
+                        "x" | "X" => Logic::X,
+                        "z" | "Z" => Logic::Z,
+                        _ => {
+                            return Err(VerilogError::Other(
+                                Some(n.nodes.0),
+                                "Invalid 1-bit hex value".to_string(),
+                            ));
+                        }
+                    }))
+                } else {
+                    let val = u64::from_str_radix(ast.get_str(&n.nodes.0).unwrap(), 2)
+                        .map_err(|e| VerilogError::ParseIntError(e, n.nodes.0))?;
+                    Ok(Parameter::bitvec(size, val))
+                }
             } else {
                 Err(VerilogError::MissingRefNode(
                     "Expected a NonZeroUnsignedNumber for the literal size".to_string(),

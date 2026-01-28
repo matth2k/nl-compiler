@@ -479,6 +479,40 @@ fn reg() {
 }
 
 #[test]
+fn reg_uninit() {
+    let src = "module reg_test (
+                           clk,
+                           d,
+                           rst,
+                           y
+                       );
+                         input clk;
+                         wire clk;
+                         input d;
+                         wire d;
+                         input rst;
+                         wire rst;
+                         output y;
+                         wire y;
+                         
+                         FDRE #(
+                             .INIT(1'bx)
+                         ) _0_ (
+                             .C(clk),
+                             .CE(1'b1),
+                             .D(d),
+                             .R(1'b0),
+                             .Q(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
 fn const_output() {
     let src = "module const_output (
                            a,
