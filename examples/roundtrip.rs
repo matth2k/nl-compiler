@@ -261,7 +261,7 @@ fn ipsum_nl(netlist: &Netlist<Gate>) -> std::io::Result<()> {
     txt.dedup();
     if txt.len() > netlist.len() {
         netlist
-            .rename_nets(|i| format_id!("{}", txt[i]))
+            .rename_nets(|_, i| format_id!("{}", txt[i]))
             .map_err(std::io::Error::other)?;
     }
     Ok(())
