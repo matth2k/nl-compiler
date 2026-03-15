@@ -147,7 +147,7 @@ fn main() -> std::io::Result<()> {
 
     eprintln!("{netlist}");
     let analysis = netlist
-        .get_analysis::<safety_net::MultiDiGraph<_>>()
+        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
         .unwrap();
     let graph = analysis.get_graph();
     let dot = petgraph::dot::Dot::with_config(graph, &[]);
