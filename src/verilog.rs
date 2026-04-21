@@ -439,13 +439,13 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
             }
 
             // Handle wire/net decl
-            NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl)) => {
-                if unwrap_node!(net_decl, UnpackedDimension).is_some() {
-                    return Err(VerilogError::Other(
-                        locs.last().cloned(),
-                        "Only single bit nets are supported".to_string(),
-                    ));
-                }
+            NodeEvent::Enter(RefNode::NetDeclAssignment(net_decl))
+                if unwrap_node!(net_decl, UnpackedDimension).is_some() =>
+            {
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Only single bit nets are supported".to_string(),
+                ));
             }
 
             // Handle constant wire assignment
