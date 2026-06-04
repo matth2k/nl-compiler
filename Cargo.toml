@@ -39,18 +39,18 @@ readme = "README.md"
 repository = "https://github.com/matth2k/nl-compiler"
 
 [dependencies]
-thiserror = { version = "2.0.16" }
-safety-net = { version = "0.7.0", features = ["graph"] }
-sv-parser = { version = "0.13.3" }
+thiserror = { version = "2.0.18" }
+safety-net = { version = "0.7.1", features = ["graph"] }
+sv-parser = { version = "0.13.5" }
 flussab = { version = "0.3.1" }
 flussab-aiger = { version = "0.1.1" }
 
 [dev-dependencies]
-clap = { version = "4.5.31", features = ["derive"] }
-petgraph = { version = "0.8.2" }
+clap = { version = "4.6.1", features = ["derive"] }
+petgraph = { version = "0.8.3" }
 lipsum = { version = "0.9.1" }
 rand = { version = "0.8.5" }
-serde = { version = "1.0.219", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 
 [features]
 default = []
