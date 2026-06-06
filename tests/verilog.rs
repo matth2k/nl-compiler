@@ -182,6 +182,12 @@ impl FromId for Gate {
                 outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
+            "FA_X1" => Ok(Gate {
+                name: s.clone(),
+                inputs: vec!["A".into(), "B".into(), "CI".into()],
+                outputs: vec!["CO".into(), "S".into()],
+                params: HashMap::new(),
+            }),
             _ => Err(safety_net::Error::ParseError(format!(
                 "Unknown primitive gate: {}",
                 s
@@ -530,4 +536,131 @@ fn const_output() {
     .to_string();
 
     assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn two_outputs() {
+    let src = "module two_outputs (
+                           a,
+                           b,
+                           cout,
+                           s
+                       );
+                         input a;
+                         wire a;
+                         input b;
+                         wire b;
+                         output cout;
+                         wire cout;
+                         output s;
+                         wire s;
+                         
+                         FA_X1 _0_ (
+                             .A(a),
+                             .B(b),
+                             .CI(1'b0),
+                             .CO(cout),
+                             .S(s)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let netlist = compile(&src).unwrap();
+    let inputs = netlist
+        .inputs()
+        .map(|n| n.as_net().to_string())
+        .collect::<Vec<_>>();
+    let outputs = netlist
+        .outputs()
+        .into_iter()
+        .map(|(_, n)| n.to_string())
+        .collect::<Vec<_>>();
+    let gates = netlist
+        .matches(|g| g.get_output_ports().into_iter().count() > 1)
+        .collect::<Vec<_>>();
+
+    assert!(inputs.contains(&"a".to_string()));
+    assert!(inputs.contains(&"b".to_string()));
+    assert!(outputs.contains(&"s".to_string()));
+    assert!(outputs.contains(&"cout".to_string()));
+    assert_eq!(gates.len(), 1);
+    assert_eq!(netlist.len(), 4);
+    let gate = &gates[0];
+    assert!(
+        gate.get_instance_type()
+            .is_some_and(|g| g.get_name() == &"FA_X1".into())
+    );
+}
+
+#[test]
+fn same_line_decl() {
+    let src = "module const_output (
+                           a,
+                           b,
+                           c,
+                           d
+                       );
+                         input a, b;
+                         wire a, b;
+                         output c, d;
+                         wire c, d;
+
+                         assign c = a;
+                         assign d = b;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let netlist = compile(&src).unwrap();
+    let inputs = netlist
+        .inputs()
+        .map(|n| n.as_net().to_string())
+        .collect::<Vec<_>>();
+    let outputs = netlist
+        .outputs()
+        .into_iter()
+        .map(|(_, n)| n.to_string())
+        .collect::<Vec<_>>();
+
+    assert!(inputs.contains(&"a".to_string()));
+    assert!(inputs.contains(&"b".to_string()));
+    assert!(outputs.contains(&"c".to_string()));
+    assert!(outputs.contains(&"d".to_string()));
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(netlist.len(), 2);
+}
+
+#[test]
+fn test_undriven_output() {
+    let src = "module undriven_output (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+                       endmodule
+                       "
+    .to_string();
+
+    let dst = "module undriven_output (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+
+                         assign y = 1'b0;
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
 }
