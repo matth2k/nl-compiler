@@ -347,8 +347,8 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
             // Handle input decl
             NodeEvent::Enter(RefNode::InputDeclarationNet(input)) => {
                 let list = &input.nodes.2;
-                let thing = &list.nodes.0;
-                for item in thing.contents() {
+                let list = &list.nodes.0;
+                for item in list.contents() {
                     let id = &item.0;
                     let name = get_identifier(RefNode::PortIdentifier(id), ast)?;
                     let net = Net::new_logic(name.clone());
@@ -361,8 +361,8 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
             // Handle output decl
             NodeEvent::Enter(RefNode::OutputDeclarationNet(output)) => {
                 let list = &output.nodes.2;
-                let thing = &list.nodes.0;
-                for item in thing.contents() {
+                let list = &list.nodes.0;
+                for item in list.contents() {
                     let id = &item.0;
                     let name = get_identifier(RefNode::PortIdentifier(id), ast)?;
                     output_set.insert(name);
