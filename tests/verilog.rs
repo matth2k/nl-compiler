@@ -633,3 +633,34 @@ fn same_line_decl() {
     assert_eq!(outputs.len(), 2);
     assert_eq!(netlist.len(), 2);
 }
+
+#[test]
+fn test_undriven_output() {
+    let src = "module undriven_output (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+                       endmodule
+                       "
+    .to_string();
+
+    let dst = "module undriven_output (
+                           a,
+                           y
+                       );
+                         input a;
+                         wire a;
+                         output y;
+                         wire y;
+
+                         assign y = 1'b0;
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
+}
