@@ -182,6 +182,12 @@ impl FromId for Gate {
                 outputs: vec!["ZN".into()],
                 params: HashMap::new(),
             }),
+            "FA_X1" => Ok(Gate {
+                name: s.clone(),
+                inputs: vec!["A".into(), "B".into(), "CI".into()],
+                outputs: vec!["CO".into(), "S".into()],
+                params: HashMap::new(),
+            }),
             _ => Err(safety_net::Error::ParseError(format!(
                 "Unknown primitive gate: {}",
                 s
@@ -530,4 +536,80 @@ fn const_output() {
     .to_string();
 
     assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn two_outputs() {
+    let src = "module const_output (
+                           a,
+                           b,
+                           cout,
+                           s
+                       );
+                         input a;
+                         wire a;
+                         input b;
+                         wire b;
+                         output cout;
+                         wire cout;
+                         output s;
+                         wire s;
+                         
+                         FA_X1 _0_ (
+                             .A(a),
+                             .B(b),
+                             .CI(1'b0),
+                             .CO(cout),
+                             .S(s)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn same_line_decl() {
+    let src = "module const_output (
+                           a,
+                           b,
+                           c,
+                           d
+                       );
+                         input a, b;
+                         wire a, b;
+                         output c, d;
+                         wire c, d;
+
+                         assign c = a;
+                         assign d = b;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let dst = "module const_output (
+                           a,
+                           b,
+                           c,
+                           d
+                       );
+                         input a;
+                         wire a;
+                         input b;
+                         wire b;
+                         output c;
+                         wire c;
+                         output d;
+                         wire d;
+
+                         assign c = a;
+                         assign d = b;
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
 }

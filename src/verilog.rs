@@ -346,19 +346,27 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
 
             // Handle input decl
             NodeEvent::Enter(RefNode::InputDeclarationNet(input)) => {
-                let id = unwrap_node!(input, PortIdentifier).unwrap();
-                let name = get_identifier(id, ast)?;
-                let net = Net::new_logic(name.clone());
-                let net = netlist.insert_input(net);
-                last_gate = Some(net.clone().unwrap());
-                drivers.insert(name, net);
+                let list = &input.nodes.2;
+                let thing = &list.nodes.0;
+                for item in thing.contents() {
+                    let id = &item.0;
+                    let name = get_identifier(RefNode::PortIdentifier(id), ast)?;
+                    let net = Net::new_logic(name.clone());
+                    let net = netlist.insert_input(net);
+                    last_gate = Some(net.clone().unwrap());
+                    drivers.insert(name, net);
+                }
             }
 
             // Handle output decl
             NodeEvent::Enter(RefNode::OutputDeclarationNet(output)) => {
-                let id = unwrap_node!(output, PortIdentifier).unwrap();
-                let name = get_identifier(id, ast)?;
-                output_set.insert(name);
+                let list = &output.nodes.2;
+                let thing = &list.nodes.0;
+                for item in thing.contents() {
+                    let id = &item.0;
+                    let name = get_identifier(RefNode::PortIdentifier(id), ast)?;
+                    output_set.insert(name);
+                }
             }
 
             // Handle instance connection
