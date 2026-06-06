@@ -531,6 +531,12 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
                     "If/else block not supported".to_string(),
                 ));
             }
+            NodeEvent::Enter(RefNode::GateInstantiation(_)) => {
+                return Err(VerilogError::Other(
+                    locs.last().cloned(),
+                    "Direct gate instantiation not supported".to_string(),
+                ));
+            }
             _ => (),
         }
     }

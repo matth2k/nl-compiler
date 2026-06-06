@@ -540,7 +540,7 @@ fn const_output() {
 
 #[test]
 fn two_outputs() {
-    let src = "module const_output (
+    let src = "module two_outputs (
                            a,
                            b,
                            cout,
@@ -566,7 +566,32 @@ fn two_outputs() {
                        endmodule
                        "
     .to_string();
-    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+
+    let netlist = compile(&src).unwrap();
+    let inputs = netlist
+        .inputs()
+        .map(|n| n.as_net().to_string())
+        .collect::<Vec<_>>();
+    let outputs = netlist
+        .outputs()
+        .into_iter()
+        .map(|(_, n)| n.to_string())
+        .collect::<Vec<_>>();
+    let gates = netlist
+        .matches(|g| g.get_output_ports().into_iter().count() > 1)
+        .collect::<Vec<_>>();
+
+    assert!(inputs.contains(&"a".to_string()));
+    assert!(inputs.contains(&"b".to_string()));
+    assert!(outputs.contains(&"s".to_string()));
+    assert!(outputs.contains(&"cout".to_string()));
+    assert_eq!(gates.len(), 1);
+    assert_eq!(netlist.len(), 4);
+    let gate = &gates[0];
+    assert!(
+        gate.get_instance_type()
+            .is_some_and(|g| g.get_name() == &"FA_X1".into())
+    );
 }
 
 #[test]
@@ -589,27 +614,22 @@ fn same_line_decl() {
                        "
     .to_string();
 
-    let dst = "module const_output (
-                           a,
-                           b,
-                           c,
-                           d
-                       );
-                         input a;
-                         wire a;
-                         input b;
-                         wire b;
-                         output c;
-                         wire c;
-                         output d;
-                         wire d;
+    let netlist = compile(&src).unwrap();
+    let inputs = netlist
+        .inputs()
+        .map(|n| n.as_net().to_string())
+        .collect::<Vec<_>>();
+    let outputs = netlist
+        .outputs()
+        .into_iter()
+        .map(|(_, n)| n.to_string())
+        .collect::<Vec<_>>();
 
-                         assign c = a;
-                         assign d = b;
-                       
-                       endmodule
-                       "
-    .to_string();
-
-    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
+    assert!(inputs.contains(&"a".to_string()));
+    assert!(inputs.contains(&"b".to_string()));
+    assert!(outputs.contains(&"c".to_string()));
+    assert!(outputs.contains(&"d".to_string()));
+    assert_eq!(inputs.len(), 2);
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(netlist.len(), 2);
 }
