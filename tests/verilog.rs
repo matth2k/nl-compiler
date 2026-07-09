@@ -215,12 +215,9 @@ fn and_gate() {
                            b,
                            y
                        );
-                         input a;
-                         wire a;
-                         input b;
-                         wire b;
-                         output y;
-                         wire y;
+                         input wire a;
+                         input wire b;
+                         output wire y;
                        
                          AND _0_ (
                              .A(a),
@@ -241,10 +238,8 @@ fn and_const_gate() {
                            b,
                            y
                        );
-                         input b;
-                         wire b;
-                         output y;
-                         wire y;
+                         input wire b;
+                         output wire y;
                        
                          AND _0_ (
                              .A(1'b1),
@@ -265,10 +260,8 @@ fn passthru() {
                            b,
                            y
                        );
-                         input b;
-                         wire b;
-                         output y;
-                         wire y;
+                         input wire b;
+                         output wire y;
                        
                          assign y = b;
                        
@@ -286,12 +279,9 @@ fn multiple_exports() {
                            y,
                            z
                        );
-                         input b;
-                         wire b;
-                         output y;
-                         wire y;
-                         output z;
-                         wire z;
+                         input wire b;
+                         output wire y;
+                         output wire z;
                        
                          assign y = b;
                          assign z = b;
@@ -311,14 +301,10 @@ fn mux_lut() {
                            c,
                            y
                        );
-                         input a;
-                         wire a;
-                         input b;
-                         wire b;
-                         input c;
-                         wire c;
-                         output y;
-                         wire y;
+                         input wire a;
+                         input wire b;
+                         input wire c;
+                         output wire y;
                        
                          LUT3 #(
                              .INIT(8'hca)
@@ -436,10 +422,8 @@ fn assignment_chain() {
                            a,
                            y
                        );
-                         input a;
-                         wire a;
-                         output y;
-                         wire y;
+                         input wire a;
+                         output wire y;
                        
                          assign y = a;
                        
@@ -458,14 +442,10 @@ fn reg() {
                            rst,
                            y
                        );
-                         input clk;
-                         wire clk;
-                         input d;
-                         wire d;
-                         input rst;
-                         wire rst;
-                         output y;
-                         wire y;
+                         input wire clk;
+                         input wire d;
+                         input wire rst;
+                         output wire y;
                          
                          FDRE #(
                              .INIT(1'b1)
@@ -492,14 +472,10 @@ fn reg_uninit() {
                            rst,
                            y
                        );
-                         input clk;
-                         wire clk;
-                         input d;
-                         wire d;
-                         input rst;
-                         wire rst;
-                         output y;
-                         wire y;
+                         input wire clk;
+                         input wire d;
+                         input wire rst;
+                         output wire y;
                          
                          FDRE #(
                              .INIT(1'bx)
@@ -524,10 +500,8 @@ fn const_output() {
                            a,
                            y
                        );
-                         input a;
-                         wire a;
-                         output y;
-                         wire y;
+                         input wire a;
+                         output wire y;
                          
                          assign y = 1'b0;
                        
@@ -640,10 +614,8 @@ fn test_undriven_output() {
                            a,
                            y
                        );
-                         input a;
-                         wire a;
-                         output y;
-                         wire y;
+                         input wire a;
+                         output wire y;
                        endmodule
                        "
     .to_string();
@@ -652,10 +624,8 @@ fn test_undriven_output() {
                            a,
                            y
                        );
-                         input a;
-                         wire a;
-                         output y;
-                         wire y;
+                         input wire a;
+                         output wire y;
 
                          assign y = 1'b0;
                        endmodule
