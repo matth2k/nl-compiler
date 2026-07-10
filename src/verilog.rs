@@ -24,7 +24,10 @@ use sv_parser::{
     PrimaryHierarchical, Select, Size, UnsignedNumber,
 };
 use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
-use sv_parser::{ContinuousAssign, ListOfNetAssignments};
+use sv_parser::{
+    ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments, NetAssignment,
+    NetLvalue, NetLvalueIdentifier,
+};
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
     ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier, PortIdentifier,
@@ -1066,13 +1069,13 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     }
 }
 
-type Wires<I> = (bool, HashMap<Identifier, DrivenNet<I>>);
+type Wires<I> = (HashSet<Identifier>, bool, HashMap<Identifier, DrivenNet<I>>);
 
 /// The visitor that iterates over basic items to create
 struct WireVisitor<'a, I: Instantiable> {
     ast: &'a SyntaxTree,
-    netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
+    outputs: HashSet<Identifier>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
     changed: bool,
 }
@@ -1080,13 +1083,13 @@ struct WireVisitor<'a, I: Instantiable> {
 impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn new(
         ast: &'a SyntaxTree,
-        netlist: &'a Rc<Netlist<I>>,
+        outputs: HashSet<Identifier>,
         drivers: HashMap<Identifier, DrivenNet<I>>,
     ) -> Self {
         Self {
             ast,
-            netlist,
             lookup: SemanticVisitor::new(ast),
+            outputs,
             drivers,
             changed: false,
         }
@@ -1101,11 +1104,80 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
             }
         }
 
-        Ok((self.changed, self.drivers))
+        Ok((self.outputs, self.changed, self.drivers))
+    }
+
+    fn visit_net_lvalue_identifier(
+        &self,
+        id: &NetLvalueIdentifier,
+    ) -> Result<Identifier, ErrorMsg> {
+        todo!()
+    }
+
+    fn visit_net_lvalue(&self, lvalue: &NetLvalue) -> Result<Identifier, ErrorMsg> {
+        match lvalue {
+            NetLvalue::Identifier(id) => self.visit_net_lvalue_identifier(id),
+            _ => Err((
+                "Only identifier lvalues are supported".to_string(),
+                self.lookup.unravel_locate(lvalue),
+            )),
+        }
+    }
+
+    fn visit_net_assignment(&mut self, assign: &NetAssignment) -> Result<bool, ErrorMsg> {
+        let lhs = &assign.nodes.0;
+        let rhs = &assign.nodes.2;
+        let lhs = self.visit_net_lvalue(lhs)?;
+        let rhs = self.lookup.visit_expression(rhs)?;
+        if let Some(driver) = self.drivers.get(&rhs).cloned()
+            && !self.drivers.contains_key(&lhs)
+        {
+            if self.outputs.contains(&lhs) {
+                driver.clone().expose_with_name(lhs.clone());
+            }
+            self.drivers.insert(lhs, driver);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn visit_list_of_net_assignments(
+        &mut self,
+        assign: &ListOfNetAssignments,
+    ) -> Result<bool, ErrorMsg> {
+        let mut changed = false;
+        for stmt in assign.nodes.0.contents() {
+            changed |= self.visit_net_assignment(stmt)?;
+        }
+        Ok(changed)
+    }
+
+    fn visit_continuous_assign_net(
+        &mut self,
+        assign: &ContinuousAssignNet,
+    ) -> Result<bool, ErrorMsg> {
+        let kw = &assign.nodes.4.nodes.0;
+        let kw = self.lookup.visit_locate(kw);
+        if kw != "=" {
+            return Err((
+                "Only simple continuous assignments are supported".to_string(),
+                self.lookup.unravel_locate(assign),
+            ));
+        }
+
+        let list = &assign.nodes.3;
+        self.visit_list_of_net_assignments(list)
     }
 
     fn visit_continuous_assign(&mut self, assign: &ContinuousAssign) -> Result<bool, ErrorMsg> {
-        todo!()
+        match assign {
+            ContinuousAssign::Net(assign) => self.visit_continuous_assign_net(assign),
+            ContinuousAssign::Variable(_) => Err((
+                "Variable assignments are not supported".to_string(),
+                self.lookup.unravel_locate(assign),
+            )),
+        }
     }
 }
 
@@ -1122,10 +1194,10 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
 
-    let (mut changing, mut drivers) = (true, drivers);
+    let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
     while changing {
-        let wire_visitor = WireVisitor::new(ast, &netlist, drivers);
-        (changing, drivers) = wire_visitor
+        let wire_visitor = WireVisitor::new(ast, outputs, drivers);
+        (outputs, changing, drivers) = wire_visitor
             .visit()
             .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
     }
