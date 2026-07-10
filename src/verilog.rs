@@ -1235,6 +1235,28 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     }
 }
 
+fn set_default_drivers<I: Instantiable>(
+    outputs: &HashSet<Identifier>,
+    drivers: &mut HashMap<Identifier, DrivenNet<I>>,
+    netlist: &Rc<Netlist<I>>,
+) -> Result<(), VerilogError> {
+    // Handle undriven outputs
+    for output in outputs {
+        if !drivers.contains_key(output) {
+            let inst =
+                I::from_constant(Logic::Z).unwrap_or(I::from_constant(Logic::False).unwrap());
+            let id = output.clone() + "default_logic".into();
+            let net = netlist
+                .insert_gate(inst, id, &[])
+                .map_err(|e| VerilogError::SafetyNetError(None, e))?
+                .get_output(0);
+            netlist.expose_net_with_name(net.clone(), output.clone());
+            drivers.insert(output.clone(), net);
+        }
+    }
+    Ok(())
+}
+
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
 /// Type parameter I defines the primitive library to parse into.
 /// You can provide a closure `overrides` to modify each instantiated cell after creation.
@@ -1259,6 +1281,8 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     }
 
     eprintln!("Drivers after: {:?}", drivers.keys().collect::<Vec<_>>());
+
+    set_default_drivers(&outputs, &mut drivers, &netlist)?;
 
     Ok(netlist)
 }
