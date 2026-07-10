@@ -21,7 +21,7 @@ use sv_parser::{
 use sv_parser::{
     BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, Expression, HexNumber, HexValue,
     HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
-    PrimaryHierarchical, Select, Size, UnsignedNumber,
+    PrimaryHierarchical, PrimaryLiteral, Select, Size, UnsignedNumber,
 };
 use sv_parser::{
     ConstantBitSelect, ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments,
@@ -47,6 +47,11 @@ use sv_parser::{
 use sv_parser::{Locate, RefNode, SyntaxTree, unwrap_node};
 
 type ErrorMsg = (String, Locate);
+
+enum IdentifierOrLogic {
+    Identifier(Identifier),
+    Logic(Logic),
+}
 
 /// The visitor for the first cell creation pass
 /// Can get bit selector, bit ranges, wire identifiers, port identifiers, most params
@@ -228,17 +233,13 @@ impl<'a> SemanticVisitor<'a> {
                     "Expected a ConstantPrimary node".to_string(),
                     self.unravel_locate(expr),
                 ))?;
-                let refnode = unwrap_node!(refnode, PrimaryLiteral).ok_or((
-                    "Expected a PrimaryLiteral node".to_string(),
-                    self.unravel_locate(expr),
-                ))?;
-                let refnode = unwrap_node!(refnode, Number).ok_or((
-                    "Expected a Number node".to_string(),
-                    self.unravel_locate(expr),
-                ))?;
+                let refnode = unwrap_node!(refnode, PrimaryLiteral);
                 match refnode {
-                    RefNode::Number(x) => self.visit_number(x),
-                    _ => unreachable!(),
+                    Some(RefNode::PrimaryLiteral(x)) => self.visit_primary_literal(x),
+                    _ => Err((
+                        "Expected a PrimaryLiteral node".to_string(),
+                        self.unravel_locate(expr),
+                    )),
                 }
             }
             ConstantExpression::Binary(_) => Err((
@@ -283,26 +284,19 @@ impl<'a> SemanticVisitor<'a> {
             return Ok(None);
         };
 
-        let refnode = unwrap_node!(refnode, PrimaryLiteral).ok_or((
-            "Expected a PrimaryLiteral node".to_string(),
-            self.unravel_locate(select),
-        ))?;
-        let refnode = unwrap_node!(refnode, Number).ok_or((
-            "Expected a Number node".to_string(),
-            self.unravel_locate(select),
-        ))?;
+        let refnode = unwrap_node!(refnode, PrimaryLiteral);
         match refnode {
-            RefNode::Number(x) => {
-                let param = self.visit_number(x)?;
-                match param {
-                    Parameter::Integer(i) => Ok(Some(i)),
-                    _ => Err((
-                        "Expected an integer for the select expression".to_string(),
-                        self.unravel_locate(select),
-                    )),
-                }
-            }
-            _ => unreachable!(),
+            Some(RefNode::PrimaryLiteral(x)) => match self.visit_primary_literal(x)? {
+                Parameter::Integer(i) => Ok(Some(i)),
+                _ => Err((
+                    "Expected an integer for the select expression".to_string(),
+                    self.unravel_locate(select),
+                )),
+            },
+            _ => Err((
+                "Expected a PrimaryLiteral node".to_string(),
+                self.unravel_locate(select),
+            )),
         }
     }
 
@@ -318,18 +312,37 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_primary(&self, primary: &Primary) -> Result<Identifier, ErrorMsg> {
-        match primary {
-            Primary::Hierarchical(h) => self.visit_hierarchical_primary(h),
+    fn visit_primary_literal(&self, literal: &PrimaryLiteral) -> Result<Parameter, ErrorMsg> {
+        match literal {
+            PrimaryLiteral::Number(x) => self.visit_number(x),
             _ => Err((
-                "Only hierarchical primary expressions are supported".to_string(),
+                "Only number literals are supported".to_string(),
+                self.unravel_locate(literal),
+            )),
+        }
+    }
+
+    fn visit_primary(&self, primary: &Primary) -> Result<IdentifierOrLogic, ErrorMsg> {
+        match primary {
+            Primary::Hierarchical(h) => Ok(IdentifierOrLogic::Identifier(
+                self.visit_hierarchical_primary(h)?,
+            )),
+            Primary::PrimaryLiteral(literal) => match self.visit_primary_literal(literal)? {
+                Parameter::Logic(l) => Ok(IdentifierOrLogic::Logic(l)),
+                _ => Err((
+                    "Only logical literals are supported".to_string(),
+                    self.unravel_locate(primary),
+                )),
+            },
+            _ => Err((
+                "Only hierarchical primary expressions and literals are supported".to_string(),
                 self.unravel_locate(primary),
             )),
         }
     }
 
     /// For parsing connections
-    fn visit_expression(&self, expr: &Expression) -> Result<Identifier, ErrorMsg> {
+    fn visit_expression(&self, expr: &Expression) -> Result<IdentifierOrLogic, ErrorMsg> {
         match expr {
             Expression::Primary(p) => self.visit_primary(p),
             _ => Err((
@@ -699,7 +712,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         conn: &NamedPortConnectionIdentifier,
-    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
         let port = self.lookup.visit_port_identifier(&conn.nodes.2);
         let Some(c) = &conn.nodes.3 else {
             return Err((
@@ -737,7 +750,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         conn: &NamedPortConnection,
-    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
         match conn {
             NamedPortConnection::Identifier(id) => {
                 self.visit_named_port_connection_identifier(inst, id)
@@ -753,7 +766,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         list: &ListOfPortConnectionsNamed,
-    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
         let list = &list.nodes.0;
         let mut res = Vec::new();
         for c in list.contents() {
@@ -766,7 +779,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         list: &ListOfPortConnections,
-    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
         match list {
             ListOfPortConnections::Named(list) => {
                 self.visit_list_of_port_connections_named(inst, list)
@@ -794,9 +807,13 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             vec = self
                 .visit_list_of_port_connections(&i, connections)?
                 .into_iter()
-                .filter_map(
-                    |(idx, output, driving)| if output { Some((idx, driving)) } else { None },
-                )
+                .filter_map(|(idx, output, driving)| {
+                    if output && let IdentifierOrLogic::Identifier(driver) = driving {
+                        Some((idx, driver))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
         }
         let ans = self.netlist.insert_gate_disconnected(i, name.clone());
@@ -1118,6 +1135,7 @@ type Wires<I> = (HashSet<Identifier>, bool, HashMap<Identifier, DrivenNet<I>>);
 /// The visitor that iterates over basic items to create
 struct WireVisitor<'a, I: Instantiable> {
     ast: &'a SyntaxTree,
+    netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     outputs: HashSet<Identifier>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
@@ -1127,11 +1145,13 @@ struct WireVisitor<'a, I: Instantiable> {
 impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn new(
         ast: &'a SyntaxTree,
+        netlist: &'a Rc<Netlist<I>>,
         outputs: HashSet<Identifier>,
         drivers: HashMap<Identifier, DrivenNet<I>>,
     ) -> Self {
         Self {
             ast,
+            netlist,
             lookup: SemanticVisitor::new(ast),
             outputs,
             drivers,
@@ -1206,6 +1226,27 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
         let rhs = &assign.nodes.2;
         let lhs = self.visit_net_lvalue(lhs)?;
         let rhs = self.lookup.visit_expression(rhs)?;
+
+        let rhs = match rhs {
+            IdentifierOrLogic::Identifier(id) => id,
+            IdentifierOrLogic::Logic(val) => {
+                let Some(inst) = I::from_constant(val) else {
+                    return Err((
+                        "Instiable type does not support constant".to_string(),
+                        self.lookup.unravel_locate(assign),
+                    ));
+                };
+                let inst_name = lhs.clone() + "const".into();
+                let dnet = self
+                    .netlist
+                    .insert_gate_disconnected(inst, inst_name)
+                    .get_output(0);
+                let output = dnet.as_net().get_identifier().clone();
+                self.drivers.insert(output.clone(), dnet);
+                output
+            }
+        };
+
         if let Some(driver) = self.drivers.get(&rhs).cloned()
             && !self.drivers.contains_key(&lhs)
         {
@@ -1274,6 +1315,7 @@ fn set_default_drivers<I: Instantiable>(
 /// The visitor that connects all the drivers at their uses
 struct InputVisitor<'a, I: Instantiable> {
     ast: &'a SyntaxTree,
+    netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     instances: HashMap<Identifier, NetRef<I>>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
@@ -1282,11 +1324,13 @@ struct InputVisitor<'a, I: Instantiable> {
 impl<'a, I: Instantiable> InputVisitor<'a, I> {
     fn new(
         ast: &'a SyntaxTree,
+        netlist: &'a Rc<Netlist<I>>,
         instances: HashMap<Identifier, NetRef<I>>,
         drivers: HashMap<Identifier, DrivenNet<I>>,
     ) -> Self {
         Self {
             ast,
+            netlist,
             lookup: SemanticVisitor::new(ast),
             instances,
             drivers,
@@ -1307,7 +1351,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         conn: &NamedPortConnectionIdentifier,
-    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
         let port = self.lookup.visit_port_identifier(&conn.nodes.2);
         let Some(c) = &conn.nodes.3 else {
             return Err((
@@ -1345,7 +1389,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         conn: &NamedPortConnection,
-    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
         match conn {
             NamedPortConnection::Identifier(id) => {
                 self.visit_named_port_connection_identifier(inst, id)
@@ -1361,7 +1405,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         list: &ListOfPortConnectionsNamed,
-    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
         let list = &list.nodes.0;
         let mut res = Vec::new();
         for c in list.contents() {
@@ -1374,7 +1418,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         list: &ListOfPortConnections,
-    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
         match list {
             ListOfPortConnections::Named(list) => {
                 self.visit_list_of_port_connections_named(inst, list)
@@ -1397,22 +1441,38 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
 
         let connections = &inst.nodes.1;
         let connections = &connections.nodes.1;
-        let mut vec: Vec<(usize, Identifier)> = Vec::new();
+        let mut vec: Vec<(usize, DrivenNet<I>)> = Vec::new();
         let Some(i) = nr.get_instance_type().map(|i| i.clone()) else {
             return Ok(());
         };
+
         if let Some(connections) = connections {
-            vec = self
-                .visit_list_of_port_connections(&i, connections)?
-                .into_iter()
-                .filter_map(
-                    |(idx, output, driving)| if !output { Some((idx, driving)) } else { None },
-                )
-                .collect();
+            for (idx, output, driving) in self.visit_list_of_port_connections(&i, connections)? {
+                if !output {
+                    let driver = match driving {
+                        IdentifierOrLogic::Identifier(id) => self.drivers[&id].clone(),
+                        IdentifierOrLogic::Logic(val) => {
+                            let Some(inst) = I::from_constant(val) else {
+                                return Err((
+                                    "Instiable type does not support constant".to_string(),
+                                    self.lookup.unravel_locate(inst),
+                                ));
+                            };
+                            let inst_name = name.clone()
+                                + i.get_input_port(idx).get_identifier().clone()
+                                + "const".into();
+                            self.netlist
+                                .insert_gate_disconnected(inst, inst_name)
+                                .get_output(0)
+                        }
+                    };
+                    vec.push((idx, driver));
+                }
+            }
         }
 
         for (idx, driving) in vec {
-            nr.get_input(idx).connect(self.drivers[&driving].clone());
+            nr.get_input(idx).connect(driving);
         }
 
         Ok(())
@@ -1434,7 +1494,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
 
     let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
     while changing {
-        let wire_visitor = WireVisitor::new(ast, outputs, drivers);
+        let wire_visitor = WireVisitor::new(ast, &netlist, outputs, drivers);
         (outputs, changing, drivers) = wire_visitor
             .visit()
             .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
@@ -1442,7 +1502,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
 
     set_default_drivers(&outputs, &mut drivers, &netlist)?;
 
-    let input_visitor = InputVisitor::new(ast, instances, drivers);
+    let input_visitor = InputVisitor::new(ast, &netlist, instances, drivers);
     input_visitor
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
