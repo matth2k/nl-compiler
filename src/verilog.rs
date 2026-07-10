@@ -53,6 +53,11 @@ enum IdentifierOrLogic {
     Logic(Logic),
 }
 
+enum IntOrString {
+    Integer(u64),
+    String(String),
+}
+
 /// The visitor for the first cell creation pass
 /// Can get bit selector, bit ranges, wire identifiers, port identifiers, most params
 struct SemanticVisitor<'a> {
@@ -168,8 +173,12 @@ impl<'a> SemanticVisitor<'a> {
         self.visit_non_zero_unsigned_number(&size.nodes.0)
     }
 
-    fn visit_binary_value(&self, num: &BinaryValue) -> u64 {
-        u64::from_str_radix(&self.visit_locate(&num.nodes.0), 2).unwrap()
+    fn visit_binary_value(&self, num: &BinaryValue) -> IntOrString {
+        let s = self.visit_locate(&num.nodes.0);
+        match u64::from_str_radix(&s, 2) {
+            Ok(val) => IntOrString::Integer(val),
+            Err(_) => IntOrString::String(s),
+        }
     }
 
     fn visit_binary_number(&self, num: &BinaryNumber) -> Parameter {
@@ -177,15 +186,27 @@ impl<'a> SemanticVisitor<'a> {
 
         let val = self.visit_binary_value(&num.nodes.2);
 
-        match size {
-            Some(1) => Parameter::Logic(Logic::from_bool(val != 0)),
-            Some(s) => Parameter::bitvec(s, val),
-            None => Parameter::Integer(val),
+        match (size, val) {
+            (Some(1), IntOrString::Integer(val)) => Parameter::Logic(Logic::from_bool(val != 0)),
+            (Some(s), IntOrString::Integer(val)) => Parameter::bitvec(s, val),
+            (None, IntOrString::Integer(val)) => Parameter::Integer(val),
+            (Some(1), IntOrString::String(s)) => Parameter::Logic(match s.as_str() {
+                "0" => Logic::False,
+                "1" => Logic::True,
+                "x" | "X" => Logic::X,
+                "z" | "Z" => Logic::Z,
+                _ => Logic::True,
+            }),
+            _ => todo!("Bitvecs cannot be four-valued logic"),
         }
     }
 
-    fn visit_hex_value(&self, num: &HexValue) -> u64 {
-        u64::from_str_radix(&self.visit_locate(&num.nodes.0), 16).unwrap()
+    fn visit_hex_value(&self, num: &HexValue) -> IntOrString {
+        let s = self.visit_locate(&num.nodes.0);
+        match u64::from_str_radix(&s, 16) {
+            Ok(val) => IntOrString::Integer(val),
+            Err(_) => IntOrString::String(s),
+        }
     }
 
     fn visit_hex_number(&self, num: &HexNumber) -> Parameter {
@@ -193,10 +214,18 @@ impl<'a> SemanticVisitor<'a> {
 
         let val = self.visit_hex_value(&num.nodes.2);
 
-        match size {
-            Some(1) => Parameter::Logic(Logic::from_bool(val != 0)),
-            Some(s) => Parameter::bitvec(s, val),
-            None => Parameter::Integer(val),
+        match (size, val) {
+            (Some(1), IntOrString::Integer(val)) => Parameter::Logic(Logic::from_bool(val != 0)),
+            (Some(s), IntOrString::Integer(val)) => Parameter::bitvec(s, val),
+            (None, IntOrString::Integer(val)) => Parameter::Integer(val),
+            (Some(1), IntOrString::String(s)) => Parameter::Logic(match s.as_str() {
+                "0" => Logic::False,
+                "1" => Logic::True,
+                "x" | "X" => Logic::X,
+                "z" | "Z" => Logic::Z,
+                _ => Logic::True,
+            }),
+            _ => todo!("Bitvecs cannot be four-valued logic"),
         }
     }
 
