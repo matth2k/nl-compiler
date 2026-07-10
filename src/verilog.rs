@@ -27,6 +27,7 @@ use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 type ErrorMsg = (String, Locate);
 
 /// The visitor for the first cell creation pass
+/// Can get bit selector, bit ranges, wire identifiers, port identifiers, most params
 struct SemanticVisitor<'a> {
     ast: &'a SyntaxTree,
 }
@@ -84,6 +85,7 @@ impl<'a> SemanticVisitor<'a> {
         self.visit_identifier(&id.nodes.0)
     }
 
+    /// For parsing most port identifiers
     fn visit_list_of_port_identifiers(
         &self,
         list: &ListOfPortIdentifiers,
@@ -181,6 +183,7 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
+    /// For parsing most parameters
     fn visit_number(&self, num: &Number) -> Result<Parameter, ErrorMsg> {
         match num {
             Number::IntegralNumber(x) => self.visit_integral_number(x),
@@ -296,6 +299,7 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
+    /// For parsing connections
     fn visit_expression(&self, expr: &Expression) -> Result<Identifier, ErrorMsg> {
         match expr {
             Expression::Primary(p) => self.visit_primary(p),
@@ -324,6 +328,7 @@ impl<'a> SemanticVisitor<'a> {
         Ok((l as usize, r as usize))
     }
 
+    /// For parsing bus decl component
     fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(usize, usize), ErrorMsg> {
         let refnode: RefNode = dim.into();
         let refnode = unwrap_node!(refnode, PackedDimensionRange).ok_or((
