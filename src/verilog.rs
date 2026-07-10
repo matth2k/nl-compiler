@@ -23,10 +23,13 @@ use sv_parser::{
     HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
     PrimaryHierarchical, Select, Size, UnsignedNumber,
 };
-use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
 use sv_parser::{
-    ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments, NetAssignment,
-    NetLvalue, NetLvalueIdentifier,
+    ConstantBitSelect, ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments,
+    NetAssignment, NetLvalue, NetLvalueIdentifier,
+};
+use sv_parser::{
+    ConstantRange, HierarchicalNetIdentifier, NetPortType, NetPortTypeDataType, NetType,
+    PackedDimension, PsOrHierarchicalNetIdentifier, PsOrHierarchicalNetIdentifierPackageScope,
 };
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
@@ -370,7 +373,7 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_constant_range(&self, range: &ConstantRange) -> Result<(usize, usize), ErrorMsg> {
+    fn visit_constant_range(&self, range: &ConstantRange) -> Result<(u64, u64), ErrorMsg> {
         let l = self.visit_constant_expression(&range.nodes.0)?;
         let r = self.visit_constant_expression(&range.nodes.2)?;
         let Parameter::Integer(l) = l else {
@@ -385,11 +388,11 @@ impl<'a> SemanticVisitor<'a> {
                 self.unravel_locate(range),
             ));
         };
-        Ok((l as usize, r as usize))
+        Ok((l, r))
     }
 
     /// For parsing bus decl component
-    fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(usize, usize), ErrorMsg> {
+    fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(u64, u64), ErrorMsg> {
         let refnode: RefNode = dim.into();
         let refnode = unwrap_node!(refnode, PackedDimensionRange).ok_or((
             "Expected a PackedDimensionRange node".to_string(),
@@ -405,10 +408,7 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_net_port_type_data_type(
-        &self,
-        ntype: &NetPortTypeDataType,
-    ) -> Result<usize, ErrorMsg> {
+    fn visit_net_port_type_data_type(&self, ntype: &NetPortTypeDataType) -> Result<u64, ErrorMsg> {
         let wire = &ntype.nodes.0;
         if !matches!(wire, Some(NetType::Wire(_))) {
             return Err((
@@ -436,7 +436,7 @@ impl<'a> SemanticVisitor<'a> {
     }
 
     /// Visit net port type to get bw
-    fn visit_net_port_type(&self, ntype: &NetPortType) -> Result<usize, ErrorMsg> {
+    fn visit_net_port_type(&self, ntype: &NetPortType) -> Result<u64, ErrorMsg> {
         match ntype {
             NetPortType::DataType(d) => self.visit_net_port_type_data_type(d),
             _ => Err((
@@ -449,7 +449,7 @@ impl<'a> SemanticVisitor<'a> {
     fn visit_net_port_header<'b>(
         &self,
         ph: &'b NetPortHeader,
-    ) -> Result<(&'b PortDirection, usize), ErrorMsg> {
+    ) -> Result<(&'b PortDirection, u64), ErrorMsg> {
         let pt = self.visit_net_port_type(&ph.nodes.1)?;
         let direction = &ph.nodes.0;
         match direction {
@@ -459,6 +459,36 @@ impl<'a> SemanticVisitor<'a> {
                 self.unravel_locate(ph),
             )),
         }
+    }
+
+    fn visit_constant_bit_select(
+        &self,
+        select: &ConstantBitSelect,
+    ) -> Result<Option<u64>, ErrorMsg> {
+        let expr = &select.nodes.0;
+        if expr.is_empty() {
+            return Ok(None);
+        }
+        if expr.len() != 1 {
+            return Err((
+                "Only single bit selects are supported".to_string(),
+                self.unravel_locate(select),
+            ));
+        }
+        let expr = &expr[0];
+        let param = self.visit_constant_expression(&expr.nodes.1)?;
+        if let Parameter::Integer(i) = param {
+            Ok(Some(i))
+        } else {
+            Err((
+                "Expected an integer for the bit select expression".to_string(),
+                self.unravel_locate(select),
+            ))
+        }
+    }
+
+    fn visit_constant_select(&self, select: &ConstantSelect) -> Result<Option<u64>, ErrorMsg> {
+        self.visit_constant_bit_select(&select.nodes.1)
     }
 }
 
@@ -1107,11 +1137,44 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
         Ok((self.outputs, self.changed, self.drivers))
     }
 
+    fn visit_hierarchical_net_identifier(
+        &self,
+        id: &HierarchicalNetIdentifier,
+    ) -> Result<Identifier, ErrorMsg> {
+        self.lookup.visit_hierarchical_identifier(&id.nodes.0)
+    }
+
+    fn visit_ps_or_hierarchical_net_identifier_package_scope(
+        &self,
+        id: &PsOrHierarchicalNetIdentifierPackageScope,
+    ) -> Identifier {
+        self.lookup.visit_net_identifier(&id.nodes.1)
+    }
+
+    fn visit_ps_or_hierarchical_net_identifier(
+        &self,
+        id: &PsOrHierarchicalNetIdentifier,
+    ) -> Result<Identifier, ErrorMsg> {
+        match id {
+            PsOrHierarchicalNetIdentifier::HierarchicalNetIdentifier(id) => {
+                self.visit_hierarchical_net_identifier(id)
+            }
+            PsOrHierarchicalNetIdentifier::PackageScope(pc) => {
+                Ok(self.visit_ps_or_hierarchical_net_identifier_package_scope(pc))
+            }
+        }
+    }
+
     fn visit_net_lvalue_identifier(
         &self,
         id: &NetLvalueIdentifier,
     ) -> Result<Identifier, ErrorMsg> {
-        todo!()
+        let ident = self.visit_ps_or_hierarchical_net_identifier(&id.nodes.0)?;
+        let select = self.lookup.visit_constant_select(&id.nodes.1)?;
+        match select {
+            Some(s) => Ok(Identifier::new(format!("{}[{}]", ident, s))),
+            None => Ok(ident),
+        }
     }
 
     fn visit_net_lvalue(&self, lvalue: &NetLvalue) -> Result<Identifier, ErrorMsg> {
@@ -1157,15 +1220,6 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
         &mut self,
         assign: &ContinuousAssignNet,
     ) -> Result<bool, ErrorMsg> {
-        let kw = &assign.nodes.4.nodes.0;
-        let kw = self.lookup.visit_locate(kw);
-        if kw != "=" {
-            return Err((
-                "Only simple continuous assignments are supported".to_string(),
-                self.lookup.unravel_locate(assign),
-            ));
-        }
-
         let list = &assign.nodes.3;
         self.visit_list_of_net_assignments(list)
     }
@@ -1194,6 +1248,8 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
 
+    eprintln!("Drivers before: {:?}", drivers.keys().collect::<Vec<_>>());
+
     let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
     while changing {
         let wire_visitor = WireVisitor::new(ast, outputs, drivers);
@@ -1202,8 +1258,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
             .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
     }
 
-    eprintln!("Outputs: {:?}", outputs);
-    eprintln!("Drivers: {:?}", drivers.keys().collect::<Vec<_>>());
+    eprintln!("Drivers after: {:?}", drivers.keys().collect::<Vec<_>>());
 
     Ok(netlist)
 }
