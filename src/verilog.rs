@@ -30,11 +30,12 @@ use sv_parser::{
     SimpleIdentifier,
 };
 use sv_parser::{
-    HierarchicalInstance, ListOfParameterAssignments, ListOfPortConnections,
-    ListOfPortConnectionsNamed, ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem,
-    ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem,
-    NamedPortConnection, NamedPortConnectionIdentifier, NetDeclaration,
-    PackageOrGenerateItemDeclaration, ParameterValueAssignment,
+    HierarchicalInstance, ListOfParameterAssignments, ListOfParameterAssignmentsNamed,
+    ListOfPortConnections, ListOfPortConnectionsNamed, ModuleCommonItem, ModuleInstantiation,
+    ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule,
+    ModuleOrGenerateItemModuleItem, NamedParameterAssignment, NamedPortConnection,
+    NamedPortConnectionIdentifier, NetDeclaration, PackageOrGenerateItemDeclaration,
+    ParameterValueAssignment,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
@@ -721,11 +722,50 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         Ok(ans)
     }
 
+    fn visit_named_parameter_assignment(
+        &self,
+        p: &NamedParameterAssignment,
+    ) -> Result<(Identifier, Parameter), ErrorMsg> {
+        let key = self.lookup.visit_parameter_identifier(&p.nodes.1);
+        let val = &p.nodes.2;
+        let val = &val.nodes.1;
+        let Some(val) = val else {
+            return Err((
+                "Expected a parameter value".to_string(),
+                self.lookup.unravel_locate(p),
+            ));
+        };
+
+        let val = self.lookup.visit_param_expression(val)?;
+
+        Ok((key, val))
+    }
+
+    fn visit_list_of_parameter_assignments_named(
+        &self,
+        list: &ListOfParameterAssignmentsNamed,
+    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+        let list = &list.nodes.0;
+        let mut res = Vec::new();
+        for p in list.contents() {
+            res.push(self.visit_named_parameter_assignment(p)?);
+        }
+        Ok(res)
+    }
+
     fn visit_list_of_parameter_assignments(
         &self,
         list: &ListOfParameterAssignments,
     ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
-        todo!()
+        match list {
+            ListOfParameterAssignments::Named(list) => {
+                self.visit_list_of_parameter_assignments_named(list)
+            }
+            ListOfParameterAssignments::Ordered(_) => Err((
+                "Ordered parameter assignments are not supported".to_string(),
+                self.lookup.unravel_locate(list),
+            )),
+        }
     }
 
     fn visit_parameter_value_assignment(
