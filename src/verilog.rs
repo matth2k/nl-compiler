@@ -913,7 +913,11 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             ModuleCommonItem::ModuleOrGenerateItemDeclaration(decl) => {
                 self.visit_module_or_generate_item_declaration(decl)
             }
-            ModuleCommonItem::ContinuousAssign(_) => todo!(),
+            ModuleCommonItem::ContinuousAssign(_) =>
+            // Handled by wire visitor
+            {
+                Ok(vec![])
+            }
             _ => Err((
                 "Only wire decl and assignment constructs are allowed".to_string(),
                 self.lookup.unravel_locate(item),
