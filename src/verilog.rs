@@ -17,13 +17,17 @@ use sv_parser::{
     HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
     PrimaryHierarchical, Select, Size, UnsignedNumber,
 };
-use sv_parser::{ConstantRange, PackedDimension};
+use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, ModuleIdentifier, NetIdentifier,
     PortIdentifier, SimpleIdentifier,
 };
+use sv_parser::{
+    InputDeclaration, InputDeclarationNet, ModuleDeclaration, ModuleDeclarationNonansi, ModuleItem,
+    OutputDeclaration, OutputDeclarationNet, PortDeclaration, PortDeclarationInput,
+    PortDeclarationOutput,
+};
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
-use sv_parser::{ModuleDeclaration, ModuleDeclarationNonansi};
 
 type ErrorMsg = (String, Locate);
 
@@ -345,13 +349,53 @@ impl<'a> SemanticVisitor<'a> {
             _ => unreachable!(),
         }
     }
+
+    fn visit_net_port_type_data_type(
+        &self,
+        ntype: &NetPortTypeDataType,
+    ) -> Result<usize, ErrorMsg> {
+        let wire = &ntype.nodes.0;
+        if !matches!(wire, Some(NetType::Wire(_))) {
+            return Err((
+                "Only wire type net port types are supported".to_string(),
+                self.unravel_locate(ntype),
+            ));
+        }
+
+        let nefnode: RefNode = ntype.into();
+        let refnode = unwrap_node!(nefnode, PackedDimension);
+
+        match refnode {
+            Some(RefNode::PackedDimension(x)) => {
+                let (l, r) = self.visit_packed_dimension(x)?;
+                if r != 0 || l <= r {
+                    return Err((
+                        "Bus range should be N-1:0".to_string(),
+                        self.unravel_locate(ntype),
+                    ));
+                }
+                Ok(l + 1)
+            }
+            _ => Ok(1),
+        }
+    }
+
+    /// Visit net port type to get bw
+    fn visit_net_port_type(&self, ntype: &NetPortType) -> Result<usize, ErrorMsg> {
+        match ntype {
+            NetPortType::DataType(d) => self.visit_net_port_type_data_type(d),
+            _ => Err((
+                "Only data type net port types are supported".to_string(),
+                self.unravel_locate(ntype),
+            )),
+        }
+    }
 }
 
 /// The visitor that iterate over basic items to create
 struct ItemVisitor<'a, I: Instantiable + FromId> {
     ast: &'a SyntaxTree,
     netlist: Rc<Netlist<I>>,
-    has_name: bool,
     lookup: SemanticVisitor<'a>,
 }
 
@@ -360,38 +404,144 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         Self {
             ast,
             netlist,
-            has_name: false,
             lookup: SemanticVisitor::new(ast),
         }
     }
 
-    fn visit_module_identifier(&mut self, id: &ModuleIdentifier) -> Result<(), ErrorMsg> {
-        if self.has_name {
-            return Err((
-                "Multiple module identifiers found".to_string(),
-                self.lookup.unravel_locate(id),
-            ));
+    fn visit(self) -> Result<Rc<Netlist<I>>, (&'a SyntaxTree, ErrorMsg)> {
+        let root = self.ast.into_iter().next().ok_or((
+            self.ast,
+            ("SourceText is empty".to_string(), Locate::default()),
+        ))?;
+
+        let decl = unwrap_node!(root, ModuleDeclaration);
+
+        match decl {
+            Some(RefNode::ModuleDeclaration(x)) => self
+                .visit_module_declaration(x)
+                .map_err(|e| (self.ast, e))?,
+            _ => {
+                return Err((
+                    self.ast,
+                    (
+                        "Expected a ModuleDeclaration node".to_string(),
+                        Locate::default(),
+                    ),
+                ));
+            }
         }
-        let id = self.lookup.visit_module_identifier(id);
-        self.netlist.set_name(id.to_string());
-        self.has_name = true;
-        Ok(())
+
+        Ok(self.netlist)
     }
 
-    fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
+    fn visit_module_identifier(&self, id: &ModuleIdentifier) {
+        let id = self.lookup.visit_module_identifier(id);
+        self.netlist.set_name(id.to_string())
+    }
+
+    fn visit_module_declaration(&self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
         let id: RefNode = decl.into();
         let id = unwrap_node!(id, ModuleIdentifier).unwrap();
         match id {
-            RefNode::ModuleIdentifier(x) => self.visit_module_identifier(x)?,
+            RefNode::ModuleIdentifier(x) => self.visit_module_identifier(x),
             _ => unreachable!(),
         }
 
-        let id: RefNode = decl.into();
-        if unwrap_node!(id, ModuleDeclarationAnsi).is_some() {
-            todo!()
+        match decl {
+            ModuleDeclaration::Nonansi(f) => {
+                let items = &f.nodes.2;
+                for item in items {
+                    self.visit_module_item(item)?;
+                }
+            }
+            ModuleDeclaration::Ansi(_) => {
+                return Err((
+                    "ANSI module declarations are not supported".to_string(),
+                    self.lookup.unravel_locate(decl),
+                ));
+            }
+            _ => {
+                return Err((
+                    "Unsupported type of module declaration".to_string(),
+                    self.lookup.unravel_locate(decl),
+                ));
+            }
         }
 
         Ok(())
+    }
+
+    fn visit_input_declaration_net(
+        &self,
+        decl: &InputDeclarationNet,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        let ntype = self.lookup.visit_net_port_type(&decl.nodes.1)?;
+        let list = &decl.nodes.2;
+        let ids = self.lookup.visit_list_of_port_identifiers(list)?;
+
+        let ids = if ntype == 1 {
+            ids
+        } else {
+            ids.into_iter()
+                .flat_map(|id| (0..ntype).map(move |i| Identifier::new(format!("{}[{}]", id, i))))
+                .collect()
+        };
+
+        let mut nets = Vec::new();
+        for id in ids {
+            nets.push(self.netlist.insert_input(Net::new_logic(id)));
+        }
+
+        Ok(nets)
+    }
+
+    fn visit_input_declaration(
+        &self,
+        decl: &InputDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match decl {
+            InputDeclaration::Net(n) => self.visit_input_declaration_net(n),
+            InputDeclaration::Variable(_) => Err((
+                "Variable input declarations are not supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            )),
+        }
+    }
+
+    fn visit_output_declaration(&self, decl: &OutputDeclaration) -> Result<(), ErrorMsg> {
+        todo!()
+    }
+
+    fn visit_port_declaration_input(
+        &self,
+        decl: &PortDeclarationInput,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        self.visit_input_declaration(&decl.nodes.1)
+    }
+
+    fn visit_port_declaration_output(&self, decl: &PortDeclarationOutput) -> Result<(), ErrorMsg> {
+        self.visit_output_declaration(&decl.nodes.1)
+    }
+
+    fn visit_port_declaration(&self, decl: &PortDeclaration) -> Result<(), ErrorMsg> {
+        match decl {
+            PortDeclaration::Input(input) => {
+                self.visit_port_declaration_input(input)?;
+                Ok(())
+            }
+            PortDeclaration::Output(output) => self.visit_port_declaration_output(output),
+            _ => Err((
+                "Only input and output port declarations are supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            )),
+        }
+    }
+
+    fn visit_module_item(&self, item: &ModuleItem) -> Result<(), ErrorMsg> {
+        match item {
+            ModuleItem::NonPortModuleItem(_) => todo!(),
+            ModuleItem::PortDeclaration(p) => self.visit_port_declaration(&p.0),
+        }
     }
 }
 
@@ -402,9 +552,11 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     ast: &sv_parser::SyntaxTree,
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
-    let sv = SemanticVisitor::new(ast);
-
-    todo!()
+    let netlist = Netlist::<I>::new("top".to_string());
+    let visitor = ItemVisitor::new(ast, netlist);
+    visitor
+        .visit()
+        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))
 }
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
