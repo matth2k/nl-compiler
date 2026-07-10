@@ -13,131 +13,338 @@ use crate::{cells::FromId, error::VerilogError};
 use safety_net::{DrivenNet, Identifier, Instantiable, Logic, Net, NetRef, Netlist, Parameter};
 use sv_parser::Identifier as SvIdentifier;
 use sv_parser::{
-    BinaryNumber, BinaryValue, DecimalNumber, HexNumber, HexValue, IntegralNumber,
-    NonZeroUnsignedNumber, Number, Size, UnsignedNumber,
+    BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, Expression, HexNumber, HexValue,
+    HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
+    PrimaryHierarchical, Select, Size, UnsignedNumber,
 };
-use sv_parser::{EscapedIdentifier, NetIdentifier, PortIdentifier, SimpleIdentifier};
+use sv_parser::{ConstantRange, PackedDimension};
+use sv_parser::{
+    EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, ModuleIdentifier, NetIdentifier,
+    PortIdentifier, SimpleIdentifier,
+};
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
+type ErrorMsg = (String, Locate);
+
 /// The visitor for the first cell creation pass
-struct NetlistVisitor<'a> {
+struct SemanticVisitor<'a> {
     ast: &'a SyntaxTree,
 }
 
-impl<'a> NetlistVisitor<'a> {
+impl<'a> SemanticVisitor<'a> {
     fn new(ast: &'a SyntaxTree) -> Self {
         Self { ast }
     }
 
-    fn visit_locate(&self, loc: &Locate) -> Option<String> {
-        self.ast.get_str(loc).map(|s| s.to_string())
+    fn unravel_locate<'b, T>(&self, t: T) -> Locate
+    where
+        T: Into<RefNode<'b>>,
+    {
+        let refnode: RefNode = t.into();
+        let refnode = unwrap_node!(refnode, Locate).unwrap();
+        match refnode {
+            RefNode::Locate(&x) => x,
+            _ => unreachable!(),
+        }
     }
 
-    fn visit_simple_identifier(&self, id: &SimpleIdentifier) -> Option<Identifier> {
-        self.visit_locate(&id.nodes.0).map(Identifier::new)
+    fn visit_locate(&self, loc: &Locate) -> String {
+        self.ast.get_str(loc).map(|s| s.to_string()).unwrap()
     }
 
-    fn visit_escaped_identifier(&self, id: &EscapedIdentifier) -> Option<Identifier> {
+    fn visit_simple_identifier(&self, id: &SimpleIdentifier) -> Identifier {
+        Identifier::new(self.visit_locate(&id.nodes.0))
+    }
+
+    fn visit_escaped_identifier(&self, id: &EscapedIdentifier) -> Identifier {
         // Already has the '\\' attached
-        self.visit_locate(&id.nodes.0).map(Identifier::new)
+        Identifier::new(self.visit_locate(&id.nodes.0))
     }
 
-    fn visit_identifier(&self, id: &SvIdentifier) -> Option<Identifier> {
+    fn visit_identifier(&self, id: &SvIdentifier) -> Identifier {
         match id {
             SvIdentifier::SimpleIdentifier(x) => self.visit_simple_identifier(x),
             SvIdentifier::EscapedIdentifier(x) => self.visit_escaped_identifier(x),
         }
     }
 
-    fn visit_net_identifier(&self, id: &NetIdentifier) -> Option<Identifier> {
+    fn visit_net_identifier(&self, id: &NetIdentifier) -> Identifier {
         self.visit_identifier(&id.nodes.0)
     }
 
-    fn visit_port_identifier(&self, id: &PortIdentifier) -> Option<Identifier> {
+    fn visit_port_identifier(&self, id: &PortIdentifier) -> Identifier {
         self.visit_identifier(&id.nodes.0)
     }
 
-    fn visit_unsigned_number(&self, num: &UnsignedNumber) -> Option<u64> {
-        self.visit_locate(&num.nodes.0)
-            .and_then(|s| s.parse::<u64>().ok())
+    fn visit_module_identifier(&self, id: &ModuleIdentifier) -> Identifier {
+        self.visit_identifier(&id.nodes.0)
     }
 
-    fn visit_decimal_number(&self, num: &DecimalNumber) -> Option<u64> {
+    fn visit_instance_identifier(&self, id: &InstanceIdentifier) -> Identifier {
+        self.visit_identifier(&id.nodes.0)
+    }
+
+    fn visit_list_of_port_identifiers(
+        &self,
+        list: &ListOfPortIdentifiers,
+    ) -> Result<Vec<Identifier>, ErrorMsg> {
+        let list = &list.nodes.0;
+        for (x, p) in list.contents() {
+            if !p.is_empty() {
+                return Err((
+                    "Expected a list of port identifiers".to_string(),
+                    self.unravel_locate(x),
+                ));
+            }
+        }
+
+        Ok(list
+            .contents()
+            .iter()
+            .map(|(x, _)| self.visit_port_identifier(x))
+            .collect())
+    }
+
+    fn visit_unsigned_number(&self, num: &UnsignedNumber) -> u64 {
+        self.visit_locate(&num.nodes.0).parse::<u64>().unwrap()
+    }
+
+    fn visit_decimal_number(&self, num: &DecimalNumber) -> Result<u64, ErrorMsg> {
         match num {
-            DecimalNumber::UnsignedNumber(x) => self.visit_unsigned_number(x),
-            DecimalNumber::BaseUnsigned(_) => None,
-            DecimalNumber::BaseXNumber(_) => None,
-            DecimalNumber::BaseZNumber(_) => None,
+            DecimalNumber::UnsignedNumber(x) => Ok(self.visit_unsigned_number(x)),
+            DecimalNumber::BaseUnsigned(_) => Err((
+                "Base unsigned decimal numbers are not supported".to_string(),
+                self.unravel_locate(num),
+            )),
+            DecimalNumber::BaseXNumber(_) => Err((
+                "Base X decimal numbers are not supported".to_string(),
+                self.unravel_locate(num),
+            )),
+            DecimalNumber::BaseZNumber(_) => Err((
+                "Base Z decimal numbers are not supported".to_string(),
+                self.unravel_locate(num),
+            )),
         }
     }
 
-    fn visit_non_zero_unsigned_number(&self, num: &NonZeroUnsignedNumber) -> Option<usize> {
-        self.visit_locate(&num.nodes.0)
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|&n| n != 0)
+    fn visit_non_zero_unsigned_number(&self, num: &NonZeroUnsignedNumber) -> usize {
+        self.visit_locate(&num.nodes.0).parse::<usize>().unwrap()
     }
 
-    fn visit_size(&self, size: &Size) -> Option<usize> {
+    fn visit_size(&self, size: &Size) -> usize {
         self.visit_non_zero_unsigned_number(&size.nodes.0)
     }
 
-    fn visit_binary_value(&self, num: &BinaryValue) -> Option<u64> {
-        self.visit_locate(&num.nodes.0)
-            .and_then(|s| u64::from_str_radix(&s, 2).ok())
+    fn visit_binary_value(&self, num: &BinaryValue) -> u64 {
+        u64::from_str_radix(&self.visit_locate(&num.nodes.0), 2).unwrap()
     }
 
-    fn visit_binary_number(&self, num: &BinaryNumber) -> Option<Parameter> {
-        let size = match &num.nodes.0 {
-            Some(x) => self.visit_size(x),
-            None => None,
-        };
+    fn visit_binary_number(&self, num: &BinaryNumber) -> Parameter {
+        let size = num.nodes.0.as_ref().map(|x| self.visit_size(x));
 
-        let val = self.visit_binary_value(&num.nodes.2)?;
+        let val = self.visit_binary_value(&num.nodes.2);
 
         match size {
-            Some(1) => Some(Parameter::Logic(Logic::from_bool(val != 0))),
-            Some(s) => Some(Parameter::bitvec(s, val)),
-            None => Some(Parameter::Integer(val)),
+            Some(1) => Parameter::Logic(Logic::from_bool(val != 0)),
+            Some(s) => Parameter::bitvec(s, val),
+            None => Parameter::Integer(val),
         }
     }
 
-    fn visit_hex_value(&self, num: &HexValue) -> Option<u64> {
-        self.visit_locate(&num.nodes.0)
-            .and_then(|s| u64::from_str_radix(&s, 16).ok())
+    fn visit_hex_value(&self, num: &HexValue) -> u64 {
+        u64::from_str_radix(&self.visit_locate(&num.nodes.0), 16).unwrap()
     }
 
-    fn visit_hex_number(&self, num: &HexNumber) -> Option<Parameter> {
-        let size = match &num.nodes.0 {
-            Some(x) => self.visit_size(x),
-            None => None,
-        };
+    fn visit_hex_number(&self, num: &HexNumber) -> Parameter {
+        let size = num.nodes.0.as_ref().map(|x| self.visit_size(x));
 
-        let val = self.visit_hex_value(&num.nodes.2)?;
+        let val = self.visit_hex_value(&num.nodes.2);
 
         match size {
-            Some(1) => Some(Parameter::Logic(Logic::from_bool(val != 0))),
-            Some(s) => Some(Parameter::bitvec(s, val)),
-            None => Some(Parameter::Integer(val)),
+            Some(1) => Parameter::Logic(Logic::from_bool(val != 0)),
+            Some(s) => Parameter::bitvec(s, val),
+            None => Parameter::Integer(val),
         }
     }
 
-    fn visit_integral_number(&self, num: &IntegralNumber) -> Option<Parameter> {
+    fn visit_integral_number(&self, num: &IntegralNumber) -> Result<Parameter, ErrorMsg> {
         match num {
             IntegralNumber::DecimalNumber(x) => {
                 self.visit_decimal_number(x).map(Parameter::Integer)
             }
-            IntegralNumber::OctalNumber(_) => None,
-            IntegralNumber::BinaryNumber(x) => self.visit_binary_number(x),
-            IntegralNumber::HexNumber(x) => self.visit_hex_number(x),
+            IntegralNumber::OctalNumber(_) => Err((
+                "Octal numbers are not supported".to_string(),
+                self.unravel_locate(num),
+            )),
+            IntegralNumber::BinaryNumber(x) => Ok(self.visit_binary_number(x)),
+            IntegralNumber::HexNumber(x) => Ok(self.visit_hex_number(x)),
         }
     }
 
-    fn visit_number(&self, num: &Number) -> Option<Parameter> {
+    fn visit_number(&self, num: &Number) -> Result<Parameter, ErrorMsg> {
         match num {
             Number::IntegralNumber(x) => self.visit_integral_number(x),
-            Number::RealNumber(_) => None,
+            Number::RealNumber(_) => Err((
+                "Real numbers are not supported".to_string(),
+                self.unravel_locate(num),
+            )),
         }
     }
+
+    fn visit_constant_expression(&self, expr: &ConstantExpression) -> Result<Parameter, ErrorMsg> {
+        match expr {
+            ConstantExpression::ConstantPrimary(x) => {
+                let refnode: RefNode = x.as_ref().into();
+                let refnode = unwrap_node!(refnode, ConstantPrimary).ok_or((
+                    "Expected a ConstantPrimary node".to_string(),
+                    self.unravel_locate(expr),
+                ))?;
+                let refnode = unwrap_node!(refnode, PrimaryLiteral).ok_or((
+                    "Expected a PrimaryLiteral node".to_string(),
+                    self.unravel_locate(expr),
+                ))?;
+                let refnode = unwrap_node!(refnode, Number).ok_or((
+                    "Expected a Number node".to_string(),
+                    self.unravel_locate(expr),
+                ))?;
+                match refnode {
+                    RefNode::Number(x) => self.visit_number(x),
+                    _ => unreachable!(),
+                }
+            }
+            ConstantExpression::Binary(_) => Err((
+                "Binary expressions are not supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+            ConstantExpression::Unary(_) => Err((
+                "Unary expressions are not supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+            ConstantExpression::Ternary(_) => Err((
+                "Ternary expressions are not supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+            ConstantExpression::Inside(_) => Err((
+                "Inside expressions are not supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+        }
+    }
+
+    fn visit_hierarchical_identifier(
+        &self,
+        id: &HierarchicalIdentifier,
+    ) -> Result<Identifier, ErrorMsg> {
+        if !id.nodes.1.is_empty() {
+            return Err((
+                "Hierarchical identifiers with qualifiers are not supported".to_string(),
+                self.unravel_locate(id),
+            ));
+        }
+        Ok(self.visit_identifier(&id.nodes.2))
+    }
+
+    fn visit_select(&self, select: &Select) -> Result<usize, ErrorMsg> {
+        let refnode: RefNode = select.into();
+        let refnode = unwrap_node!(refnode, BitSelect).ok_or((
+            "Expected a BitSelect node".to_string(),
+            self.unravel_locate(select),
+        ))?;
+        let refnode = unwrap_node!(refnode, Expression).ok_or((
+            "Expected a Expression node".to_string(),
+            self.unravel_locate(select),
+        ))?;
+        let refnode = unwrap_node!(refnode, PrimaryLiteral).ok_or((
+            "Expected a PrimaryLiteral node".to_string(),
+            self.unravel_locate(select),
+        ))?;
+        let refnode = unwrap_node!(refnode, Number).ok_or((
+            "Expected a Number node".to_string(),
+            self.unravel_locate(select),
+        ))?;
+        match refnode {
+            RefNode::Number(x) => {
+                let param = self.visit_number(x)?;
+                match param {
+                    Parameter::Integer(i) => Ok(i as usize),
+                    _ => Err((
+                        "Expected an integer for the select expression".to_string(),
+                        self.unravel_locate(select),
+                    )),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn visit_hierarchical_primary(
+        &self,
+        primary: &PrimaryHierarchical,
+    ) -> Result<Identifier, ErrorMsg> {
+        let id = self.visit_hierarchical_identifier(&primary.nodes.1)?;
+        let select = self.visit_select(&primary.nodes.2)?;
+        Ok(Identifier::new(format!("{}[{}]", id, select)))
+    }
+
+    fn visit_primary(&self, primary: &Primary) -> Result<Identifier, ErrorMsg> {
+        match primary {
+            Primary::Hierarchical(h) => self.visit_hierarchical_primary(h),
+            _ => Err((
+                "Only hierarchical primary expressions are supported".to_string(),
+                self.unravel_locate(primary),
+            )),
+        }
+    }
+
+    fn visit_expression(&self, expr: &Expression) -> Result<Identifier, ErrorMsg> {
+        match expr {
+            Expression::Primary(p) => self.visit_primary(p),
+            _ => Err((
+                "Only primary expressions are supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+        }
+    }
+
+    fn visit_constant_range(&self, range: &ConstantRange) -> Result<(usize, usize), ErrorMsg> {
+        let l = self.visit_constant_expression(&range.nodes.0)?;
+        let r = self.visit_constant_expression(&range.nodes.2)?;
+        let Parameter::Integer(l) = l else {
+            return Err((
+                "Expected an integer for the left side of range".to_string(),
+                self.unravel_locate(range),
+            ));
+        };
+        let Parameter::Integer(r) = r else {
+            return Err((
+                "Expected an integer for the left side of range".to_string(),
+                self.unravel_locate(range),
+            ));
+        };
+        Ok((l as usize, r as usize))
+    }
+
+    fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(usize, usize), ErrorMsg> {
+        let refnode: RefNode = dim.into();
+        let refnode = unwrap_node!(refnode, PackedDimensionRange).ok_or((
+            "Expected a PackedDimensionRange node".to_string(),
+            self.unravel_locate(dim),
+        ))?;
+        let refnode = unwrap_node!(refnode, ConstantRange).ok_or((
+            "Expected a ConstantRange node".to_string(),
+            self.unravel_locate(dim),
+        ))?;
+        match refnode {
+            RefNode::ConstantRange(x) => self.visit_constant_range(x),
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// The visitor that iterate over basic items to create
+struct ItemVisitor<'a, I: Instantiable + FromId> {
+    ast: &'a SyntaxTree,
+    netlist: Rc<Netlist<I>>,
 }
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
@@ -147,6 +354,8 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     ast: &sv_parser::SyntaxTree,
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
+    let sv = SemanticVisitor::new(ast);
+
     todo!()
 }
 
