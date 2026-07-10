@@ -29,12 +29,12 @@ use sv_parser::{
     ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier, PortIdentifier,
     SimpleIdentifier,
 };
-use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 use sv_parser::{
-    ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration,
-    ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem, NetDeclaration,
-    PackageOrGenerateItemDeclaration,
+    HierarchicalInstance, ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem,
+    ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem,
+    NetDeclaration, PackageOrGenerateItemDeclaration,
 };
+use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
 type ErrorMsg = (String, Locate);
 
@@ -606,11 +606,33 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
+    fn visit_hierarchical_instance(&self, inst: &HierarchicalInstance) -> Identifier {
+        let name = &inst.nodes.0;
+        let name = &name.nodes.0;
+        self.lookup.visit_instance_identifier(name)
+    }
+
     fn visit_module_instantiation(
         &self,
         inst: &ModuleInstantiation,
-    ) -> Result<NetRef<I>, ErrorMsg> {
-        todo!()
+    ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
+        let inst_type = self.lookup.visit_module_identifier(&inst.nodes.0);
+        let inst_type = I::from_id(&inst_type).map_err(|e| {
+            (
+                format!("Unknown instantiable type: {}", e),
+                self.lookup.unravel_locate(inst),
+            )
+        })?;
+        let instances = &inst.nodes.2;
+        let mut vec = Vec::new();
+        for instance in instances.contents() {
+            let inst_name = self.visit_hierarchical_instance(instance);
+            vec.push(
+                self.netlist
+                    .insert_gate_disconnected(inst_type.clone(), inst_name),
+            );
+        }
+        Ok(vec)
     }
 
     fn visit_package_or_generate_item_declaration(
@@ -682,7 +704,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     fn visit_module_or_generate_item_module(
         &self,
         item: &ModuleOrGenerateItemModule,
-    ) -> Result<NetRef<I>, ErrorMsg> {
+    ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
         self.visit_module_instantiation(&item.nodes.1)
     }
 
@@ -693,7 +715,8 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         match item {
             ModuleOrGenerateItem::Module(m) => Ok(self
                 .visit_module_or_generate_item_module(m)?
-                .outputs()
+                .into_iter()
+                .flat_map(|nr| nr.outputs().collect::<Vec<_>>())
                 .collect()),
             ModuleOrGenerateItem::ModuleItem(mi) => {
                 self.visit_module_or_generate_item_module_item(mi)
