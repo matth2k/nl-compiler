@@ -1266,13 +1266,17 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
                     ));
                 };
                 let inst_name = lhs.clone() + "const".into();
-                let dnet = self
-                    .netlist
-                    .insert_gate_disconnected(inst, inst_name)
-                    .get_output(0);
-                let output = dnet.as_net().get_identifier().clone();
-                self.drivers.insert(output.clone(), dnet);
-                output
+                let net_name = lhs.clone() + "const_net".into();
+                if !self.drivers.contains_key(&net_name) {
+                    let dnet = self
+                        .netlist
+                        .insert_gate_disconnected(inst, inst_name)
+                        .get_output(0);
+                    dnet.as_net_mut().set_identifier(net_name.clone());
+                    self.drivers.insert(net_name.clone(), dnet);
+                }
+
+                net_name
             }
         };
 
