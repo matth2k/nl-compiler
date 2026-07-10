@@ -461,22 +461,24 @@ impl<'a> SemanticVisitor<'a> {
 type Items<I> = (HashSet<Identifier>, HashMap<Identifier, DrivenNet<I>>);
 
 /// The visitor that iterate over basic items to create
-struct ItemVisitor<'a, I: Instantiable + FromId> {
+struct ItemVisitor<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> {
     ast: &'a SyntaxTree,
     netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     outputs: HashSet<Identifier>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
+    overrides: F,
 }
 
-impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
-    fn new(ast: &'a SyntaxTree, netlist: &'a Rc<Netlist<I>>) -> Self {
+impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisitor<'a, I, F> {
+    fn new(ast: &'a SyntaxTree, netlist: &'a Rc<Netlist<I>>, overrides: F) -> Self {
         Self {
             ast,
             netlist,
             lookup: SemanticVisitor::new(ast),
             outputs: HashSet::new(),
             drivers: HashMap::new(),
+            overrides,
         }
     }
 
@@ -831,13 +833,18 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         &mut self,
         inst: &ModuleInstantiation,
     ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
-        let inst_type = self.lookup.visit_module_identifier(&inst.nodes.0);
-        let mut inst_type = I::from_id(&inst_type).map_err(|e| {
+        let inst_type_name = self.lookup.visit_module_identifier(&inst.nodes.0);
+        let inst_type = I::from_id(&inst_type_name).map_err(|e| {
             (
                 format!("Unknown instantiable type: {}", e),
                 self.lookup.unravel_locate(inst),
             )
         })?;
+
+        let mut inst_type = match (self.overrides)(&inst_type_name, &inst_type) {
+            Some(overridden) => overridden,
+            None => inst_type,
+        };
 
         let params = &inst.nodes.1;
         if let Some(params) = params {
@@ -1062,7 +1069,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::<I>::new("top".to_string());
-    let item_visitor = ItemVisitor::new(ast, &netlist);
+    let item_visitor = ItemVisitor::new(ast, &netlist, overrides);
     let (outputs, drivers) = item_visitor
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
