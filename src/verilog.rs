@@ -30,10 +30,11 @@ use sv_parser::{
     SimpleIdentifier,
 };
 use sv_parser::{
-    HierarchicalInstance, ListOfPortConnections, ListOfPortConnectionsNamed, ModuleCommonItem,
-    ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration,
-    ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem, NamedPortConnection,
-    NamedPortConnectionIdentifier, NetDeclaration, PackageOrGenerateItemDeclaration,
+    HierarchicalInstance, ListOfParameterAssignments, ListOfPortConnections,
+    ListOfPortConnectionsNamed, ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem,
+    ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem,
+    NamedPortConnection, NamedPortConnectionIdentifier, NetDeclaration,
+    PackageOrGenerateItemDeclaration, ParameterValueAssignment,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
@@ -720,17 +721,45 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         Ok(ans)
     }
 
+    fn visit_list_of_parameter_assignments(
+        &self,
+        list: &ListOfParameterAssignments,
+    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+        todo!()
+    }
+
+    fn visit_parameter_value_assignment(
+        &self,
+        p: &ParameterValueAssignment,
+    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+        let list = &p.nodes.1;
+        let list = &list.nodes.1;
+        match list {
+            Some(list) => self.visit_list_of_parameter_assignments(list),
+            None => Ok(vec![]),
+        }
+    }
+
     fn visit_module_instantiation(
         &self,
         inst: &ModuleInstantiation,
     ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
         let inst_type = self.lookup.visit_module_identifier(&inst.nodes.0);
-        let inst_type = I::from_id(&inst_type).map_err(|e| {
+        let mut inst_type = I::from_id(&inst_type).map_err(|e| {
             (
                 format!("Unknown instantiable type: {}", e),
                 self.lookup.unravel_locate(inst),
             )
         })?;
+
+        let params = &inst.nodes.1;
+        if let Some(params) = params {
+            let assignments = self.visit_parameter_value_assignment(params)?;
+            for (id, value) in assignments {
+                inst_type.set_parameter(&id, value);
+            }
+        }
+
         let instances = &inst.nodes.2;
         let mut vec = Vec::new();
         for instance in instances.contents() {
