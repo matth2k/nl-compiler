@@ -23,6 +23,7 @@ use sv_parser::{
     PortIdentifier, SimpleIdentifier,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
+use sv_parser::{ModuleDeclaration, ModuleDeclarationNonansi};
 
 type ErrorMsg = (String, Locate);
 
@@ -350,6 +351,48 @@ impl<'a> SemanticVisitor<'a> {
 struct ItemVisitor<'a, I: Instantiable + FromId> {
     ast: &'a SyntaxTree,
     netlist: Rc<Netlist<I>>,
+    has_name: bool,
+    lookup: SemanticVisitor<'a>,
+}
+
+impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
+    fn new(ast: &'a SyntaxTree, netlist: Rc<Netlist<I>>) -> Self {
+        Self {
+            ast,
+            netlist,
+            has_name: false,
+            lookup: SemanticVisitor::new(ast),
+        }
+    }
+
+    fn visit_module_identifier(&mut self, id: &ModuleIdentifier) -> Result<(), ErrorMsg> {
+        if self.has_name {
+            return Err((
+                "Multiple module identifiers found".to_string(),
+                self.lookup.unravel_locate(id),
+            ));
+        }
+        let id = self.lookup.visit_module_identifier(id);
+        self.netlist.set_name(id.to_string());
+        self.has_name = true;
+        Ok(())
+    }
+
+    fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
+        let id: RefNode = decl.into();
+        let id = unwrap_node!(id, ModuleIdentifier).unwrap();
+        match id {
+            RefNode::ModuleIdentifier(x) => self.visit_module_identifier(x)?,
+            _ => unreachable!(),
+        }
+
+        let id: RefNode = decl.into();
+        if unwrap_node!(id, ModuleDeclarationAnsi).is_some() {
+            todo!()
+        }
+
+        Ok(())
+    }
 }
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
