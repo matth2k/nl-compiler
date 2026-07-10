@@ -455,23 +455,29 @@ impl<'a> SemanticVisitor<'a> {
     }
 }
 
+type Items<I> = (HashSet<Identifier>, HashMap<Identifier, DrivenNet<I>>);
+
 /// The visitor that iterate over basic items to create
 struct ItemVisitor<'a, I: Instantiable + FromId> {
     ast: &'a SyntaxTree,
-    netlist: Rc<Netlist<I>>,
+    netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
+    outputs: HashSet<Identifier>,
+    drivers: HashMap<Identifier, DrivenNet<I>>,
 }
 
 impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
-    fn new(ast: &'a SyntaxTree, netlist: Rc<Netlist<I>>) -> Self {
+    fn new(ast: &'a SyntaxTree, netlist: &'a Rc<Netlist<I>>) -> Self {
         Self {
             ast,
             netlist,
             lookup: SemanticVisitor::new(ast),
+            outputs: HashSet::new(),
+            drivers: HashMap::new(),
         }
     }
 
-    fn visit(self) -> Result<Rc<Netlist<I>>, (&'a SyntaxTree, ErrorMsg)> {
+    fn visit(mut self) -> Result<Items<I>, (&'a SyntaxTree, ErrorMsg)> {
         let root = self.ast.into_iter().next().ok_or((
             self.ast,
             ("SourceText is empty".to_string(), Locate::default()),
@@ -494,7 +500,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
             }
         }
 
-        Ok(self.netlist)
+        Ok((self.outputs, self.drivers))
     }
 
     fn visit_module_identifier(&self, id: &ModuleIdentifier) {
@@ -502,7 +508,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         self.netlist.set_name(id.to_string())
     }
 
-    fn visit_module_declaration(&self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
+    fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
         let id: RefNode = decl.into();
         let id = unwrap_node!(id, ModuleIdentifier).unwrap();
         match id {
@@ -577,8 +583,37 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
-    fn visit_output_declaration(&self, decl: &OutputDeclaration) -> Result<(), ErrorMsg> {
-        todo!()
+    fn visit_output_declaration_net(
+        &mut self,
+        decl: &OutputDeclarationNet,
+    ) -> Result<(), ErrorMsg> {
+        let ntype = self.lookup.visit_net_port_type(&decl.nodes.1)?;
+        let list = &decl.nodes.2;
+        let ids = self.lookup.visit_list_of_port_identifiers(list)?;
+
+        let ids = if ntype == 1 {
+            ids
+        } else {
+            ids.into_iter()
+                .flat_map(|id| (0..ntype).map(move |i| Identifier::new(format!("{}[{}]", id, i))))
+                .collect()
+        };
+
+        for id in ids {
+            self.outputs.insert(id);
+        }
+
+        Ok(())
+    }
+
+    fn visit_output_declaration(&mut self, decl: &OutputDeclaration) -> Result<(), ErrorMsg> {
+        match decl {
+            OutputDeclaration::Net(n) => self.visit_output_declaration_net(n),
+            OutputDeclaration::Variable(_) => Err((
+                "Variable output declarations are not supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            )),
+        }
     }
 
     fn visit_port_declaration_input(
@@ -588,12 +623,15 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         self.visit_input_declaration(&decl.nodes.1)
     }
 
-    fn visit_port_declaration_output(&self, decl: &PortDeclarationOutput) -> Result<(), ErrorMsg> {
+    fn visit_port_declaration_output(
+        &mut self,
+        decl: &PortDeclarationOutput,
+    ) -> Result<(), ErrorMsg> {
         self.visit_output_declaration(&decl.nodes.1)
     }
 
     fn visit_port_declaration(
-        &self,
+        &mut self,
         decl: &PortDeclaration,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match decl {
@@ -693,7 +731,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_hierarchical_instance(
-        &self,
+        &mut self,
         i: I,
         inst: &HierarchicalInstance,
     ) -> Result<NetRef<I>, ErrorMsg> {
@@ -716,7 +754,10 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         let ans = self.netlist.insert_gate_disconnected(i, name);
 
         for (idx, driving) in vec {
-            ans.get_output(idx).as_net_mut().set_identifier(driving);
+            ans.get_output(idx)
+                .as_net_mut()
+                .set_identifier(driving.clone());
+            self.drivers.insert(driving, ans.get_output(idx));
         }
 
         Ok(ans)
@@ -781,7 +822,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_module_instantiation(
-        &self,
+        &mut self,
         inst: &ModuleInstantiation,
     ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
         let inst_type = self.lookup.visit_module_identifier(&inst.nodes.0);
@@ -875,14 +916,14 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_module_or_generate_item_module(
-        &self,
+        &mut self,
         item: &ModuleOrGenerateItemModule,
     ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
         self.visit_module_instantiation(&item.nodes.1)
     }
 
     fn visit_module_or_generate_item(
-        &self,
+        &mut self,
         item: &ModuleOrGenerateItem,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match item {
@@ -902,7 +943,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_non_port_module_item(
-        &self,
+        &mut self,
         item: &NonPortModuleItem,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match item {
@@ -916,7 +957,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
-    fn visit_module_item(&self, item: &ModuleItem) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    fn visit_module_item(&mut self, item: &ModuleItem) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match item {
             ModuleItem::NonPortModuleItem(item) => self.visit_non_port_module_item(item),
             ModuleItem::PortDeclaration(p) => self.visit_port_declaration(&p.0),
@@ -924,7 +965,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_ansi_port_declaration_net(
-        &self,
+        &mut self,
         decl: &AnsiPortDeclarationNet,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         if !decl.nodes.2.is_empty() {
@@ -961,7 +1002,12 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
                 .into_iter()
                 .map(|id| self.netlist.insert_input(Net::new_logic(id)))
                 .collect()),
-            PortDirection::Output(_) => todo!(),
+            PortDirection::Output(_) => {
+                for id in ids {
+                    self.outputs.insert(id);
+                }
+                Ok(vec![])
+            }
             _ => Err((
                 "Only input and output port directions are supported".to_string(),
                 self.lookup.unravel_locate(decl),
@@ -970,7 +1016,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_ansi_port_declaration(
-        &self,
+        &mut self,
         decl: &AnsiPortDeclaration,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match decl {
@@ -983,7 +1029,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
     }
 
     fn visit_list_of_port_declarations(
-        &self,
+        &mut self,
         list: &ListOfPortDeclarations,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         let list = &list.nodes.0;
@@ -1010,10 +1056,12 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::<I>::new("top".to_string());
-    let visitor = ItemVisitor::new(ast, netlist);
+    let visitor = ItemVisitor::new(ast, &netlist);
     visitor
         .visit()
-        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))
+        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+
+    Ok(netlist)
 }
 
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
