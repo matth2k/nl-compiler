@@ -29,6 +29,10 @@ use sv_parser::{
     PortIdentifier, SimpleIdentifier,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
+use sv_parser::{
+    ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemModule,
+    ModuleOrGenerateItemModuleItem, NetDeclaration, PackageOrGenerateItemDeclaration,
+};
 
 type ErrorMsg = (String, Locate);
 
@@ -545,13 +549,16 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         self.visit_output_declaration(&decl.nodes.1)
     }
 
-    fn visit_port_declaration(&self, decl: &PortDeclaration) -> Result<(), ErrorMsg> {
+    fn visit_port_declaration(
+        &self,
+        decl: &PortDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match decl {
-            PortDeclaration::Input(input) => {
-                self.visit_port_declaration_input(input)?;
-                Ok(())
+            PortDeclaration::Input(input) => self.visit_port_declaration_input(input),
+            PortDeclaration::Output(output) => {
+                self.visit_port_declaration_output(output)?;
+                Ok(vec![])
             }
-            PortDeclaration::Output(output) => self.visit_port_declaration_output(output),
             _ => Err((
                 "Only input and output port declarations are supported".to_string(),
                 self.lookup.unravel_locate(decl),
@@ -559,11 +566,62 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
-    fn visit_non_port_module_item(&self, item: &NonPortModuleItem) -> Result<(), ErrorMsg> {
+    fn visit_module_instantiation(
+        &self,
+        inst: &ModuleInstantiation,
+    ) -> Result<NetRef<I>, ErrorMsg> {
         todo!()
     }
 
-    fn visit_module_item(&self, item: &ModuleItem) -> Result<(), ErrorMsg> {
+    fn visit_module_or_generate_item_module_item(
+        &self,
+        item: &ModuleOrGenerateItemModuleItem,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        todo!()
+    }
+
+    fn visit_module_or_generate_item_module(
+        &self,
+        item: &ModuleOrGenerateItemModule,
+    ) -> Result<NetRef<I>, ErrorMsg> {
+        self.visit_module_instantiation(&item.nodes.1)
+    }
+
+    fn visit_module_or_generate_item(
+        &self,
+        item: &ModuleOrGenerateItem,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match item {
+            ModuleOrGenerateItem::Module(m) => Ok(self
+                .visit_module_or_generate_item_module(m)?
+                .outputs()
+                .collect()),
+            ModuleOrGenerateItem::ModuleItem(mi) => {
+                self.visit_module_or_generate_item_module_item(mi)
+            }
+            _ => Err((
+                "Only cell instances and wires are allowed".to_string(),
+                self.lookup.unravel_locate(item),
+            )),
+        }
+    }
+
+    fn visit_non_port_module_item(
+        &self,
+        item: &NonPortModuleItem,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match item {
+            NonPortModuleItem::ModuleOrGenerateItem(item) => {
+                self.visit_module_or_generate_item(item)
+            }
+            _ => Err((
+                "Only cell instances and wires are allowed".to_string(),
+                self.lookup.unravel_locate(item),
+            )),
+        }
+    }
+
+    fn visit_module_item(&self, item: &ModuleItem) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match item {
             ModuleItem::NonPortModuleItem(item) => self.visit_non_port_module_item(item),
             ModuleItem::PortDeclaration(p) => self.visit_port_declaration(&p.0),
