@@ -757,6 +757,9 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
             ans.get_output(idx)
                 .as_net_mut()
                 .set_identifier(driving.clone());
+            if self.outputs.contains(&driving) {
+                ans.get_output(idx).expose_with_name(driving.clone());
+            }
             self.drivers.insert(driving, ans.get_output(idx));
         }
 
