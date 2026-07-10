@@ -19,9 +19,9 @@ use sv_parser::{
     PortDeclaration, PortDeclarationInput, PortDeclarationOutput, PortDirection,
 };
 use sv_parser::{
-    BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, Expression, HexNumber, HexValue,
-    HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
-    PrimaryHierarchical, PrimaryLiteral, Select, Size, UnsignedNumber,
+    BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, DecimalNumberBaseUnsigned,
+    Expression, HexNumber, HexValue, HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber,
+    Number, Primary, PrimaryHierarchical, PrimaryLiteral, Select, Size, UnsignedNumber,
 };
 use sv_parser::{
     ConstantBitSelect, ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments,
@@ -147,13 +147,26 @@ impl<'a> SemanticVisitor<'a> {
         self.visit_locate(&num.nodes.0).parse::<u64>().unwrap()
     }
 
-    fn visit_decimal_number(&self, num: &DecimalNumber) -> Result<u64, ErrorMsg> {
+    fn visit_decimal_number_base_unsigned(
+        &self,
+        num: &DecimalNumberBaseUnsigned,
+    ) -> Result<Parameter, ErrorMsg> {
+        let size = num.nodes.0.as_ref().map(|x| self.visit_size(x));
+
+        let val = self.visit_unsigned_number(&num.nodes.2);
+        match size {
+            Some(1) => Ok(Parameter::Logic(Logic::from_bool(val != 0))),
+            Some(s) => Ok(Parameter::bitvec(s, val)),
+            None => Ok(Parameter::Integer(val)),
+        }
+    }
+
+    fn visit_decimal_number(&self, num: &DecimalNumber) -> Result<Parameter, ErrorMsg> {
         match num {
-            DecimalNumber::UnsignedNumber(x) => Ok(self.visit_unsigned_number(x)),
-            DecimalNumber::BaseUnsigned(_) => Err((
-                "Base unsigned decimal numbers are not supported".to_string(),
-                self.unravel_locate(num),
-            )),
+            DecimalNumber::UnsignedNumber(x) => {
+                Ok(Parameter::Integer(self.visit_unsigned_number(x)))
+            }
+            DecimalNumber::BaseUnsigned(x) => self.visit_decimal_number_base_unsigned(x),
             DecimalNumber::BaseXNumber(_) => Err((
                 "Base X decimal numbers are not supported".to_string(),
                 self.unravel_locate(num),
@@ -231,9 +244,7 @@ impl<'a> SemanticVisitor<'a> {
 
     fn visit_integral_number(&self, num: &IntegralNumber) -> Result<Parameter, ErrorMsg> {
         match num {
-            IntegralNumber::DecimalNumber(x) => {
-                self.visit_decimal_number(x).map(Parameter::Integer)
-            }
+            IntegralNumber::DecimalNumber(x) => self.visit_decimal_number(x),
             IntegralNumber::OctalNumber(_) => Err((
                 "Octal numbers are not supported".to_string(),
                 self.unravel_locate(num),
