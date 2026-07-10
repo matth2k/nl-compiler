@@ -13,6 +13,12 @@ use crate::{cells::FromId, error::VerilogError};
 use safety_net::{DrivenNet, Identifier, Instantiable, Logic, Net, NetRef, Netlist, Parameter};
 use sv_parser::Identifier as SvIdentifier;
 use sv_parser::{
+    AnsiPortDeclaration, AnsiPortDeclarationNet, InputDeclaration, InputDeclarationNet,
+    ListOfPortDeclarations, ModuleDeclaration, ModuleDeclarationNonansi, ModuleItem, NetPortHeader,
+    NetPortHeaderOrInterfacePortHeader, NonPortModuleItem, OutputDeclaration, OutputDeclarationNet,
+    PortDeclaration, PortDeclarationInput, PortDeclarationOutput, PortDirection,
+};
+use sv_parser::{
     BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, Expression, HexNumber, HexValue,
     HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber, Number, Primary,
     PrimaryHierarchical, Select, Size, UnsignedNumber,
@@ -21,11 +27,6 @@ use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, Packed
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, ModuleIdentifier, NetIdentifier,
     PortIdentifier, SimpleIdentifier,
-};
-use sv_parser::{
-    InputDeclaration, InputDeclarationNet, ModuleDeclaration, ModuleDeclarationNonansi, ModuleItem,
-    OutputDeclaration, OutputDeclarationNet, PortDeclaration, PortDeclarationInput,
-    PortDeclarationOutput,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
@@ -390,6 +391,21 @@ impl<'a> SemanticVisitor<'a> {
             )),
         }
     }
+
+    fn visit_net_port_header<'b>(
+        &self,
+        ph: &'b NetPortHeader,
+    ) -> Result<(&'b PortDirection, usize), ErrorMsg> {
+        let pt = self.visit_net_port_type(&ph.nodes.1)?;
+        let direction = &ph.nodes.0;
+        match direction {
+            Some(dir) => Ok((dir, pt)),
+            None => Err((
+                "Port direction is required".to_string(),
+                self.unravel_locate(ph),
+            )),
+        }
+    }
 }
 
 /// The visitor that iterate over basic items to create
@@ -454,11 +470,17 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
                     self.visit_module_item(item)?;
                 }
             }
-            ModuleDeclaration::Ansi(_) => {
-                return Err((
-                    "ANSI module declarations are not supported".to_string(),
-                    self.lookup.unravel_locate(decl),
-                ));
+            ModuleDeclaration::Ansi(f) => {
+                let ports = &f.nodes.0;
+                let ports = &ports.nodes.6;
+                if let Some(ports) = ports {
+                    self.visit_list_of_port_declarations(ports)?;
+                }
+
+                let items = &f.nodes.2;
+                for item in items {
+                    self.visit_non_port_module_item(item)?;
+                }
             }
             _ => {
                 return Err((
@@ -537,10 +559,92 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
+    fn visit_non_port_module_item(&self, item: &NonPortModuleItem) -> Result<(), ErrorMsg> {
+        todo!()
+    }
+
     fn visit_module_item(&self, item: &ModuleItem) -> Result<(), ErrorMsg> {
         match item {
-            ModuleItem::NonPortModuleItem(_) => todo!(),
+            ModuleItem::NonPortModuleItem(item) => self.visit_non_port_module_item(item),
             ModuleItem::PortDeclaration(p) => self.visit_port_declaration(&p.0),
+        }
+    }
+
+    fn visit_ansi_port_declaration_net(
+        &self,
+        decl: &AnsiPortDeclarationNet,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        if !decl.nodes.2.is_empty() {
+            return Err((
+                "Only simple port declarations are supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            ));
+        }
+
+        let id = self.lookup.visit_port_identifier(&decl.nodes.1);
+
+        let (dir, bw) = match &decl.nodes.0 {
+            Some(NetPortHeaderOrInterfacePortHeader::NetPortHeader(ph)) => {
+                self.lookup.visit_net_port_header(ph)?
+            }
+            _ => {
+                return Err((
+                    "Net port header is required".to_string(),
+                    self.lookup.unravel_locate(decl),
+                ));
+            }
+        };
+
+        let ids = if bw == 1 {
+            vec![id]
+        } else {
+            (0..bw)
+                .map(move |i| Identifier::new(format!("{}[{}]", id, i)))
+                .collect()
+        };
+
+        match dir {
+            PortDirection::Input(_) => Ok(ids
+                .into_iter()
+                .map(|id| self.netlist.insert_input(Net::new_logic(id)))
+                .collect()),
+            PortDirection::Output(_) => todo!(),
+            _ => Err((
+                "Only input and output port directions are supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            )),
+        }
+    }
+
+    fn visit_ansi_port_declaration(
+        &self,
+        decl: &AnsiPortDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match decl {
+            AnsiPortDeclaration::Net(net) => self.visit_ansi_port_declaration_net(net),
+            _ => Err((
+                "Only net port declarations are supported".to_string(),
+                self.lookup.unravel_locate(decl),
+            )),
+        }
+    }
+
+    fn visit_list_of_port_declarations(
+        &self,
+        list: &ListOfPortDeclarations,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        let list = &list.nodes.0;
+        let list = &list.nodes.1;
+        match list {
+            Some(list) => {
+                let mut nets = Vec::new();
+                for decl in list.contents() {
+                    let decl = &decl.1;
+                    nets.append(&mut self.visit_ansi_port_declaration(decl)?);
+                }
+                Ok(nets)
+            }
+            None => Ok(vec![]),
         }
     }
 }
