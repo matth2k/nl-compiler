@@ -25,8 +25,9 @@ use sv_parser::{
 };
 use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
 use sv_parser::{
-    EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, ModuleIdentifier, NetIdentifier,
-    ParameterIdentifier, PortIdentifier, SimpleIdentifier,
+    EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
+    ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier, PortIdentifier,
+    SimpleIdentifier,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 use sv_parser::{
@@ -319,6 +320,40 @@ impl<'a> SemanticVisitor<'a> {
             Expression::Primary(p) => self.visit_primary(p),
             _ => Err((
                 "Only primary expressions are supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+        }
+    }
+
+    fn visit_mintypmax_expression(
+        &self,
+        expr: &MintypmaxExpression,
+    ) -> Result<Parameter, ErrorMsg> {
+        match expr {
+            MintypmaxExpression::Expression(e) => {
+                let refnode: RefNode = e.as_ref().into();
+                let refnode = unwrap_node!(refnode, Number);
+                match refnode {
+                    Some(RefNode::Number(x)) => self.visit_number(x),
+                    _ => Err((
+                        "Expected a Number parameter".to_string(),
+                        self.unravel_locate(expr),
+                    )),
+                }
+            }
+            _ => Err((
+                "Ternary in params not supported".to_string(),
+                self.unravel_locate(expr),
+            )),
+        }
+    }
+
+    /// For parsinging parameter argument values
+    fn visit_param_expression(&self, expr: &ParamExpression) -> Result<Parameter, ErrorMsg> {
+        match expr {
+            ParamExpression::MintypmaxExpression(e) => self.visit_mintypmax_expression(e),
+            _ => Err((
+                "Only expressions for parameters are supported".to_string(),
                 self.unravel_locate(expr),
             )),
         }
