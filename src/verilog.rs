@@ -14,7 +14,7 @@ use safety_net::{DrivenNet, Identifier, Instantiable, Logic, Net, NetRef, Netlis
 use sv_parser::Identifier as SvIdentifier;
 use sv_parser::{
     AnsiPortDeclaration, AnsiPortDeclarationNet, InputDeclaration, InputDeclarationNet,
-    ListOfPortDeclarations, ModuleDeclaration, ModuleDeclarationNonansi, ModuleItem, NetPortHeader,
+    ListOfPortDeclarations, ModuleDeclaration, ModuleItem, NetPortHeader,
     NetPortHeaderOrInterfacePortHeader, NonPortModuleItem, OutputDeclaration, OutputDeclarationNet,
     PortDeclaration, PortDeclarationInput, PortDeclarationOutput, PortDirection,
 };
@@ -44,7 +44,7 @@ use sv_parser::{
     NamedPortConnectionIdentifier, NetDeclaration, PackageOrGenerateItemDeclaration,
     ParameterValueAssignment,
 };
-use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
+use sv_parser::{Locate, RefNode, SyntaxTree, unwrap_node};
 
 type ErrorMsg = (String, Locate);
 
@@ -492,7 +492,11 @@ impl<'a> SemanticVisitor<'a> {
     }
 }
 
-type Items<I> = (HashSet<Identifier>, HashMap<Identifier, DrivenNet<I>>);
+type Items<I> = (
+    HashSet<Identifier>,
+    HashMap<Identifier, NetRef<I>>,
+    HashMap<Identifier, DrivenNet<I>>,
+);
 
 /// The visitor that iterates over basic items to create
 struct ItemVisitor<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> {
@@ -500,6 +504,7 @@ struct ItemVisitor<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Optio
     netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     outputs: HashSet<Identifier>,
+    instances: HashMap<Identifier, NetRef<I>>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
     overrides: F,
 }
@@ -511,6 +516,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             netlist,
             lookup: SemanticVisitor::new(ast),
             outputs: HashSet::new(),
+            instances: HashMap::new(),
             drivers: HashMap::new(),
             overrides,
         }
@@ -539,7 +545,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             }
         }
 
-        Ok((self.outputs, self.drivers))
+        Ok((self.outputs, self.instances, self.drivers))
     }
 
     fn visit_module_identifier(&self, id: &ModuleIdentifier) {
@@ -586,7 +592,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     }
 
     fn visit_input_declaration_net(
-        &self,
+        &mut self,
         decl: &InputDeclarationNet,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         let ntype = self.lookup.visit_net_port_type(&decl.nodes.1)?;
@@ -603,14 +609,16 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
 
         let mut nets = Vec::new();
         for id in ids {
-            nets.push(self.netlist.insert_input(Net::new_logic(id)));
+            let driver = self.netlist.insert_input(Net::new_logic(id.clone()));
+            self.drivers.insert(id, driver.clone());
+            nets.push(driver);
         }
 
         Ok(nets)
     }
 
     fn visit_input_declaration(
-        &self,
+        &mut self,
         decl: &InputDeclaration,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         match decl {
@@ -656,7 +664,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     }
 
     fn visit_port_declaration_input(
-        &self,
+        &mut self,
         decl: &PortDeclarationInput,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
         self.visit_input_declaration(&decl.nodes.1)
@@ -790,7 +798,8 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
                 )
                 .collect();
         }
-        let ans = self.netlist.insert_gate_disconnected(i, name);
+        let ans = self.netlist.insert_gate_disconnected(i, name.clone());
+        self.instances.insert(name, ans.clone());
 
         for (idx, driving) in vec {
             ans.get_output(idx)
@@ -1051,7 +1060,11 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         match dir {
             PortDirection::Input(_) => Ok(ids
                 .into_iter()
-                .map(|id| self.netlist.insert_input(Net::new_logic(id)))
+                .map(|id| {
+                    let driver = self.netlist.insert_input(Net::new_logic(id.clone()));
+                    self.drivers.insert(id, driver.clone());
+                    driver
+                })
                 .collect()),
             PortDirection::Output(_) => {
                 for id in ids {
@@ -1257,6 +1270,154 @@ fn set_default_drivers<I: Instantiable>(
     Ok(())
 }
 
+/// The visitor that connects all the drivers at their uses
+struct InputVisitor<'a, I: Instantiable> {
+    ast: &'a SyntaxTree,
+    lookup: SemanticVisitor<'a>,
+    instances: HashMap<Identifier, NetRef<I>>,
+    drivers: HashMap<Identifier, DrivenNet<I>>,
+}
+
+impl<'a, I: Instantiable> InputVisitor<'a, I> {
+    fn new(
+        ast: &'a SyntaxTree,
+        instances: HashMap<Identifier, NetRef<I>>,
+        drivers: HashMap<Identifier, DrivenNet<I>>,
+    ) -> Self {
+        Self {
+            ast,
+            lookup: SemanticVisitor::new(ast),
+            instances,
+            drivers,
+        }
+    }
+
+    fn visit(self) -> Result<(), (&'a SyntaxTree, ErrorMsg)> {
+        for n in self.ast {
+            if let RefNode::HierarchicalInstance(inst) = n {
+                self.visit_hierarchical_instance(inst)
+                    .map_err(|e| (self.ast, e))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_named_port_connection_identifier(
+        &self,
+        inst: &I,
+        conn: &NamedPortConnectionIdentifier,
+    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+        let port = self.lookup.visit_port_identifier(&conn.nodes.2);
+        let Some(c) = &conn.nodes.3 else {
+            return Err((
+                "Expected a connection expression".to_string(),
+                self.lookup.unravel_locate(conn),
+            ));
+        };
+
+        let c = &c.nodes.1;
+
+        let Some(expr) = c else {
+            return Err((
+                "Expected a connection expression".to_string(),
+                self.lookup.unravel_locate(conn),
+            ));
+        };
+
+        let c = self.lookup.visit_expression(expr)?;
+        let (idx, is_output) = match (inst.find_input(&port), inst.find_output(&port)) {
+            (Some(input), None) => (input, false),
+            (None, Some(output)) => (output, true),
+            (None, None) => {
+                return Err((
+                    format!("Port {port} not found on instance"),
+                    self.lookup.unravel_locate(conn),
+                ));
+            }
+            _ => unreachable!(),
+        };
+
+        Ok((idx, is_output, c))
+    }
+
+    fn visit_named_port_connection(
+        &self,
+        inst: &I,
+        conn: &NamedPortConnection,
+    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+        match conn {
+            NamedPortConnection::Identifier(id) => {
+                self.visit_named_port_connection_identifier(inst, id)
+            }
+            NamedPortConnection::Asterisk(_) => Err((
+                "Asterisk port connections are not supported".to_string(),
+                self.lookup.unravel_locate(conn),
+            )),
+        }
+    }
+
+    fn visit_list_of_port_connections_named(
+        &self,
+        inst: &I,
+        list: &ListOfPortConnectionsNamed,
+    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+        let list = &list.nodes.0;
+        let mut res = Vec::new();
+        for c in list.contents() {
+            res.push(self.visit_named_port_connection(inst, c)?);
+        }
+        Ok(res)
+    }
+
+    fn visit_list_of_port_connections(
+        &self,
+        inst: &I,
+        list: &ListOfPortConnections,
+    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+        match list {
+            ListOfPortConnections::Named(list) => {
+                self.visit_list_of_port_connections_named(inst, list)
+            }
+            _ => Err((
+                "Only named port connections are supported".to_string(),
+                self.lookup.unravel_locate(list),
+            )),
+        }
+    }
+
+    fn visit_hierarchical_instance(&self, inst: &HierarchicalInstance) -> Result<(), ErrorMsg> {
+        let name = &inst.nodes.0;
+        let name = &name.nodes.0;
+        let name = self.lookup.visit_instance_identifier(name);
+        let nr = self.instances.get(&name).ok_or((
+            format!("Instance {name} not inserted into netlist"),
+            self.lookup.unravel_locate(inst),
+        ))?;
+
+        let connections = &inst.nodes.1;
+        let connections = &connections.nodes.1;
+        let mut vec: Vec<(usize, Identifier)> = Vec::new();
+        let Some(i) = nr.get_instance_type().map(|i| i.clone()) else {
+            return Ok(());
+        };
+        if let Some(connections) = connections {
+            vec = self
+                .visit_list_of_port_connections(&i, connections)?
+                .into_iter()
+                .filter_map(
+                    |(idx, output, driving)| if !output { Some((idx, driving)) } else { None },
+                )
+                .collect();
+        }
+
+        for (idx, driving) in vec {
+            nr.get_input(idx).connect(self.drivers[&driving].clone());
+        }
+
+        Ok(())
+    }
+}
+
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
 /// Type parameter I defines the primitive library to parse into.
 /// You can provide a closure `overrides` to modify each instantiated cell after creation.
@@ -1266,11 +1427,9 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::<I>::new("top".to_string());
     let item_visitor = ItemVisitor::new(ast, &netlist, overrides);
-    let (outputs, drivers) = item_visitor
+    let (outputs, instances, drivers) = item_visitor
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
-
-    eprintln!("Drivers before: {:?}", drivers.keys().collect::<Vec<_>>());
 
     let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
     while changing {
@@ -1280,9 +1439,12 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
             .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
     }
 
-    eprintln!("Drivers after: {:?}", drivers.keys().collect::<Vec<_>>());
-
     set_default_drivers(&outputs, &mut drivers, &netlist)?;
+
+    let input_visitor = InputVisitor::new(ast, instances, drivers);
+    input_visitor
+        .visit()
+        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
 
     Ok(netlist)
 }
