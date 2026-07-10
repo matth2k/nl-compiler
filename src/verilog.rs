@@ -24,6 +24,7 @@ use sv_parser::{
     PrimaryHierarchical, Select, Size, UnsignedNumber,
 };
 use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
+use sv_parser::{ContinuousAssign, ListOfNetAssignments};
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
     ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier, PortIdentifier,
@@ -460,7 +461,7 @@ impl<'a> SemanticVisitor<'a> {
 
 type Items<I> = (HashSet<Identifier>, HashMap<Identifier, DrivenNet<I>>);
 
-/// The visitor that iterate over basic items to create
+/// The visitor that iterates over basic items to create
 struct ItemVisitor<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> {
     ast: &'a SyntaxTree,
     netlist: &'a Rc<Netlist<I>>,
@@ -1065,6 +1066,49 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     }
 }
 
+type Wires<I> = (bool, HashMap<Identifier, DrivenNet<I>>);
+
+/// The visitor that iterates over basic items to create
+struct WireVisitor<'a, I: Instantiable> {
+    ast: &'a SyntaxTree,
+    netlist: &'a Rc<Netlist<I>>,
+    lookup: SemanticVisitor<'a>,
+    drivers: HashMap<Identifier, DrivenNet<I>>,
+    changed: bool,
+}
+
+impl<'a, I: Instantiable> WireVisitor<'a, I> {
+    fn new(
+        ast: &'a SyntaxTree,
+        netlist: &'a Rc<Netlist<I>>,
+        drivers: HashMap<Identifier, DrivenNet<I>>,
+    ) -> Self {
+        Self {
+            ast,
+            netlist,
+            lookup: SemanticVisitor::new(ast),
+            drivers,
+            changed: false,
+        }
+    }
+
+    fn visit(mut self) -> Result<Wires<I>, (&'a SyntaxTree, ErrorMsg)> {
+        for n in self.ast {
+            if let RefNode::ContinuousAssign(assign) = n {
+                self.changed |= self
+                    .visit_continuous_assign(assign)
+                    .map_err(|e| (self.ast, e))?;
+            }
+        }
+
+        Ok((self.changed, self.drivers))
+    }
+
+    fn visit_continuous_assign(&mut self, assign: &ContinuousAssign) -> Result<bool, ErrorMsg> {
+        todo!()
+    }
+}
+
 /// Construct a Safety Net [Netlist] from a Verilog netlist AST.
 /// Type parameter I defines the primitive library to parse into.
 /// You can provide a closure `overrides` to modify each instantiated cell after creation.
@@ -1077,6 +1121,14 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     let (outputs, drivers) = item_visitor
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+
+    let (mut changing, mut drivers) = (true, drivers);
+    while changing {
+        let wire_visitor = WireVisitor::new(ast, &netlist, drivers);
+        (changing, drivers) = wire_visitor
+            .visit()
+            .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+    }
 
     eprintln!("Outputs: {:?}", outputs);
     eprintln!("Drivers: {:?}", drivers.keys().collect::<Vec<_>>());
