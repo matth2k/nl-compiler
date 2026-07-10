@@ -26,7 +26,7 @@ use sv_parser::{
 use sv_parser::{ConstantRange, NetPortType, NetPortTypeDataType, NetType, PackedDimension};
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, ModuleIdentifier, NetIdentifier,
-    PortIdentifier, SimpleIdentifier,
+    ParameterIdentifier, PortIdentifier, SimpleIdentifier,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 use sv_parser::{
@@ -88,6 +88,10 @@ impl<'a> SemanticVisitor<'a> {
     }
 
     fn visit_module_identifier(&self, id: &ModuleIdentifier) -> Identifier {
+        self.visit_identifier(&id.nodes.0)
+    }
+
+    fn visit_parameter_identifier(&self, id: &ParameterIdentifier) -> Identifier {
         self.visit_identifier(&id.nodes.0)
     }
 
