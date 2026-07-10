@@ -30,9 +30,10 @@ use sv_parser::{
     SimpleIdentifier,
 };
 use sv_parser::{
-    HierarchicalInstance, ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem,
-    ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem,
-    NetDeclaration, PackageOrGenerateItemDeclaration,
+    HierarchicalInstance, ListOfPortConnections, ListOfPortConnectionsNamed, ModuleCommonItem,
+    ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration,
+    ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem, NamedPortConnection,
+    NamedPortConnectionIdentifier, NetDeclaration, PackageOrGenerateItemDeclaration,
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 
@@ -606,10 +607,117 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         }
     }
 
-    fn visit_hierarchical_instance(&self, inst: &HierarchicalInstance) -> Identifier {
+    fn visit_named_port_connection_identifier(
+        &self,
+        inst: &I,
+        conn: &NamedPortConnectionIdentifier,
+    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+        let port = self.lookup.visit_port_identifier(&conn.nodes.2);
+        let Some(c) = &conn.nodes.3 else {
+            return Err((
+                "Expected a connection expression".to_string(),
+                self.lookup.unravel_locate(conn),
+            ));
+        };
+
+        let c = &c.nodes.1;
+
+        let Some(expr) = c else {
+            return Err((
+                "Expected a connection expression".to_string(),
+                self.lookup.unravel_locate(conn),
+            ));
+        };
+
+        let c = self.lookup.visit_expression(expr)?;
+        let (idx, is_output) = match (inst.find_input(&port), inst.find_output(&port)) {
+            (Some(input), None) => (input, false),
+            (None, Some(output)) => (output, true),
+            (None, None) => {
+                return Err((
+                    format!("Port {port} not found on instance"),
+                    self.lookup.unravel_locate(conn),
+                ));
+            }
+            _ => unreachable!(),
+        };
+
+        Ok((idx, is_output, c))
+    }
+
+    fn visit_named_port_connection(
+        &self,
+        inst: &I,
+        conn: &NamedPortConnection,
+    ) -> Result<(usize, bool, Identifier), ErrorMsg> {
+        match conn {
+            NamedPortConnection::Identifier(id) => {
+                self.visit_named_port_connection_identifier(inst, id)
+            }
+            NamedPortConnection::Asterisk(_) => Err((
+                "Asterisk port connections are not supported".to_string(),
+                self.lookup.unravel_locate(conn),
+            )),
+        }
+    }
+
+    fn visit_list_of_port_connections_named(
+        &self,
+        inst: &I,
+        list: &ListOfPortConnectionsNamed,
+    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+        let list = &list.nodes.0;
+        let mut res = Vec::new();
+        for c in list.contents() {
+            res.push(self.visit_named_port_connection(inst, c)?);
+        }
+        Ok(res)
+    }
+
+    fn visit_list_of_port_connections(
+        &self,
+        inst: &I,
+        list: &ListOfPortConnections,
+    ) -> Result<Vec<(usize, bool, Identifier)>, ErrorMsg> {
+        match list {
+            ListOfPortConnections::Named(list) => {
+                self.visit_list_of_port_connections_named(inst, list)
+            }
+            _ => Err((
+                "Only named port connections are supported".to_string(),
+                self.lookup.unravel_locate(list),
+            )),
+        }
+    }
+
+    fn visit_hierarchical_instance(
+        &self,
+        i: I,
+        inst: &HierarchicalInstance,
+    ) -> Result<NetRef<I>, ErrorMsg> {
         let name = &inst.nodes.0;
         let name = &name.nodes.0;
-        self.lookup.visit_instance_identifier(name)
+        let name = self.lookup.visit_instance_identifier(name);
+
+        let connections = &inst.nodes.1;
+        let connections = &connections.nodes.1;
+        let mut vec: Vec<(usize, Identifier)> = Vec::new();
+        if let Some(connections) = connections {
+            vec = self
+                .visit_list_of_port_connections(&i, connections)?
+                .into_iter()
+                .filter_map(
+                    |(idx, output, driving)| if output { Some((idx, driving)) } else { None },
+                )
+                .collect();
+        }
+        let ans = self.netlist.insert_gate_disconnected(i, name);
+
+        for (idx, driving) in vec {
+            ans.get_output(idx).as_net_mut().set_identifier(driving);
+        }
+
+        Ok(ans)
     }
 
     fn visit_module_instantiation(
@@ -626,11 +734,7 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         let instances = &inst.nodes.2;
         let mut vec = Vec::new();
         for instance in instances.contents() {
-            let inst_name = self.visit_hierarchical_instance(instance);
-            vec.push(
-                self.netlist
-                    .insert_gate_disconnected(inst_type.clone(), inst_name),
-            );
+            vec.push(self.visit_hierarchical_instance(inst_type.clone(), instance)?);
         }
         Ok(vec)
     }
