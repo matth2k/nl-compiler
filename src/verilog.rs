@@ -410,10 +410,11 @@ impl<'a> SemanticVisitor<'a> {
 
     fn visit_net_port_type_data_type(&self, ntype: &NetPortTypeDataType) -> Result<u64, ErrorMsg> {
         let wire = &ntype.nodes.0;
-        if !matches!(wire, Some(NetType::Wire(_))) {
+
+        if !matches!(wire, Some(NetType::Wire(_)) | None) {
             return Err((
-                "Only wire type net port types are supported".to_string(),
-                self.unravel_locate(ntype),
+                format!("Only wire type net port types are supported ({wire:?})"),
+                Locate::default(),
             ));
         }
 
