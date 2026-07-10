@@ -266,16 +266,16 @@ impl<'a> SemanticVisitor<'a> {
         Ok(self.visit_identifier(&id.nodes.2))
     }
 
-    fn visit_select(&self, select: &Select) -> Result<usize, ErrorMsg> {
+    fn visit_select(&self, select: &Select) -> Result<Option<u64>, ErrorMsg> {
         let refnode: RefNode = select.into();
-        let refnode = unwrap_node!(refnode, BitSelect).ok_or((
-            "Expected a BitSelect node".to_string(),
-            self.unravel_locate(select),
-        ))?;
-        let refnode = unwrap_node!(refnode, Expression).ok_or((
-            "Expected a Expression node".to_string(),
-            self.unravel_locate(select),
-        ))?;
+        let Some(refnode) = unwrap_node!(refnode, BitSelect) else {
+            return Ok(None);
+        };
+
+        let Some(refnode) = unwrap_node!(refnode, Expression) else {
+            return Ok(None);
+        };
+
         let refnode = unwrap_node!(refnode, PrimaryLiteral).ok_or((
             "Expected a PrimaryLiteral node".to_string(),
             self.unravel_locate(select),
@@ -288,7 +288,7 @@ impl<'a> SemanticVisitor<'a> {
             RefNode::Number(x) => {
                 let param = self.visit_number(x)?;
                 match param {
-                    Parameter::Integer(i) => Ok(i as usize),
+                    Parameter::Integer(i) => Ok(Some(i)),
                     _ => Err((
                         "Expected an integer for the select expression".to_string(),
                         self.unravel_locate(select),
@@ -305,7 +305,10 @@ impl<'a> SemanticVisitor<'a> {
     ) -> Result<Identifier, ErrorMsg> {
         let id = self.visit_hierarchical_identifier(&primary.nodes.1)?;
         let select = self.visit_select(&primary.nodes.2)?;
-        Ok(Identifier::new(format!("{}[{}]", id, select)))
+        match select {
+            Some(s) => Ok(Identifier::new(format!("{}[{}]", id, s))),
+            None => Ok(id),
+        }
     }
 
     fn visit_primary(&self, primary: &Primary) -> Result<Identifier, ErrorMsg> {
