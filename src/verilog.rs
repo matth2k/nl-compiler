@@ -31,8 +31,9 @@ use sv_parser::{
 };
 use sv_parser::{Locate, NodeEvent, RefNode, SyntaxTree, unwrap_node};
 use sv_parser::{
-    ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemModule,
-    ModuleOrGenerateItemModuleItem, NetDeclaration, PackageOrGenerateItemDeclaration,
+    ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration,
+    ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem, NetDeclaration,
+    PackageOrGenerateItemDeclaration,
 };
 
 type ErrorMsg = (String, Locate);
@@ -612,11 +613,70 @@ impl<'a, I: Instantiable + FromId> ItemVisitor<'a, I> {
         todo!()
     }
 
+    fn visit_package_or_generate_item_declaration(
+        &self,
+        item: &PackageOrGenerateItemDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match item {
+            PackageOrGenerateItemDeclaration::NetDeclaration(decl) => match decl.as_ref() {
+                NetDeclaration::NetType(ntype) => {
+                    if !matches!(ntype.nodes.0, NetType::Wire(_)) {
+                        Err((
+                            "Only wire typed declarations are supported".to_string(),
+                            self.lookup.unravel_locate(item),
+                        ))
+                    } else {
+                        Ok(vec![])
+                    }
+                }
+                _ => Err((
+                    "Only wire typed declarations are supported".to_string(),
+                    self.lookup.unravel_locate(item),
+                )),
+            },
+            _ => Err((
+                "Only wire decl constructs are allowed".to_string(),
+                self.lookup.unravel_locate(item),
+            )),
+        }
+    }
+
+    fn visit_module_or_generate_item_declaration(
+        &self,
+        item: &ModuleOrGenerateItemDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match item {
+            ModuleOrGenerateItemDeclaration::PackageOrGenerateItemDeclaration(pkg) => {
+                self.visit_package_or_generate_item_declaration(pkg)
+            }
+            _ => Err((
+                "Only wire decl constructs are allowed".to_string(),
+                self.lookup.unravel_locate(item),
+            )),
+        }
+    }
+
+    fn visit_module_common_item(
+        &self,
+        item: &ModuleCommonItem,
+    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+        match item {
+            ModuleCommonItem::ModuleOrGenerateItemDeclaration(decl) => {
+                self.visit_module_or_generate_item_declaration(decl)
+            }
+            ModuleCommonItem::ContinuousAssign(_) => todo!(),
+            _ => Err((
+                "Only wire decl and assignment constructs are allowed".to_string(),
+                self.lookup.unravel_locate(item),
+            )),
+        }
+    }
+
     fn visit_module_or_generate_item_module_item(
         &self,
         item: &ModuleOrGenerateItemModuleItem,
     ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
-        todo!()
+        self.visit_module_common_item(&item.nodes.1)
     }
 
     fn visit_module_or_generate_item_module(
