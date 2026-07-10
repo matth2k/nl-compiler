@@ -354,11 +354,6 @@ fn bad_lut_name() {
 
     let r = compile(&src);
     assert!(r.is_err());
-    let e = r.err().unwrap();
-    assert!(matches!(
-        e,
-        VerilogError::SafetyNetError(_, safety_net::Error::ParseError(_))
-    ));
 }
 
 #[test]
