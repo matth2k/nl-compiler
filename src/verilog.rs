@@ -1056,10 +1056,13 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::<I>::new("top".to_string());
-    let visitor = ItemVisitor::new(ast, &netlist);
-    visitor
+    let item_visitor = ItemVisitor::new(ast, &netlist);
+    let (outputs, drivers) = item_visitor
         .visit()
         .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+
+    eprintln!("Outputs: {:?}", outputs);
+    eprintln!("Drivers: {:?}", drivers.keys().collect::<Vec<_>>());
 
     Ok(netlist)
 }
