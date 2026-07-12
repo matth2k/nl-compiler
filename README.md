@@ -31,7 +31,7 @@ fn sv_parse_wrapper(
 
 ### 2. Define a Cell Library
 
-Safety-Net netlists are generic to the cell library under an [Instantiable] interface. Simple create a cell library that implements this interface. This is where the most of the boiler-plate comes from.
+[safety-net](https://github.com/matth2k/safety-net) netlists are generic to the cell library under an [Instantiable](https://matth2k.github.io/safety-net/safety_net/trait.Instantiable.html) interface. Simply create a cell library that implements this interface. This is where the most of the boiler-plate comes from.
 
 ```rust
 use safety_net::{Net, Identifier, Instantiable}
@@ -117,6 +117,18 @@ impl Instantiable for Gate {
             }),
             _ => None,
         }
+    }
+
+    fn get_constant(&self) -> Option<Logic> {
+        match self.name.to_string().as_str() {
+            "GND" => Some(Logic::False),
+            "VDD" => Some(Logic::True),
+            _ => None,
+        }
+    }
+
+    fn is_seq(&self) -> bool {
+        false
     }
 }
 ```
