@@ -46,8 +46,6 @@ use sv_parser::{
 };
 use sv_parser::{Locate, RefNode, SyntaxTree, unwrap_node};
 
-type ErrorMsg = (String, Locate);
-
 enum IdentifierOrLogic {
     Identifier(Identifier),
     Logic(Logic),
@@ -67,18 +65,6 @@ struct SemanticVisitor<'a> {
 impl<'a> SemanticVisitor<'a> {
     fn new(ast: &'a SyntaxTree) -> Self {
         Self { ast }
-    }
-
-    fn unravel_locate<'b, T>(&self, t: T) -> Locate
-    where
-        T: Into<RefNode<'b>>,
-    {
-        let refnode: RefNode = t.into();
-        let refnode = unwrap_node!(refnode, Locate).unwrap();
-        match refnode {
-            RefNode::Locate(&x) => x,
-            _ => unreachable!(),
-        }
     }
 
     fn visit_locate(&self, loc: &Locate) -> String {
@@ -125,14 +111,15 @@ impl<'a> SemanticVisitor<'a> {
     fn visit_list_of_port_identifiers(
         &self,
         list: &ListOfPortIdentifiers,
-    ) -> Result<Vec<Identifier>, ErrorMsg> {
+    ) -> Result<Vec<Identifier>, VerilogError> {
         let list = &list.nodes.0;
         for (x, p) in list.contents() {
             if !p.is_empty() {
-                return Err((
+                return VerilogError::new(
+                    self.ast,
+                    x,
                     "Expected a list of port identifiers".to_string(),
-                    self.unravel_locate(x),
-                ));
+                );
             }
         }
 
@@ -150,7 +137,7 @@ impl<'a> SemanticVisitor<'a> {
     fn visit_decimal_number_base_unsigned(
         &self,
         num: &DecimalNumberBaseUnsigned,
-    ) -> Result<Parameter, ErrorMsg> {
+    ) -> Result<Parameter, VerilogError> {
         let size = num.nodes.0.as_ref().map(|x| self.visit_size(x));
 
         let val = self.visit_unsigned_number(&num.nodes.2);
@@ -161,20 +148,22 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_decimal_number(&self, num: &DecimalNumber) -> Result<Parameter, ErrorMsg> {
+    fn visit_decimal_number(&self, num: &DecimalNumber) -> Result<Parameter, VerilogError> {
         match num {
             DecimalNumber::UnsignedNumber(x) => {
                 Ok(Parameter::Integer(self.visit_unsigned_number(x)))
             }
             DecimalNumber::BaseUnsigned(x) => self.visit_decimal_number_base_unsigned(x),
-            DecimalNumber::BaseXNumber(_) => Err((
+            DecimalNumber::BaseXNumber(_) => VerilogError::new(
+                self.ast,
+                num,
                 "Base X decimal numbers are not supported".to_string(),
-                self.unravel_locate(num),
-            )),
-            DecimalNumber::BaseZNumber(_) => Err((
+            ),
+            DecimalNumber::BaseZNumber(_) => VerilogError::new(
+                self.ast,
+                num,
                 "Base Z decimal numbers are not supported".to_string(),
-                self.unravel_locate(num),
-            )),
+            ),
         }
     }
 
@@ -242,79 +231,89 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_integral_number(&self, num: &IntegralNumber) -> Result<Parameter, ErrorMsg> {
+    fn visit_integral_number(&self, num: &IntegralNumber) -> Result<Parameter, VerilogError> {
         match num {
             IntegralNumber::DecimalNumber(x) => self.visit_decimal_number(x),
-            IntegralNumber::OctalNumber(_) => Err((
-                "Octal numbers are not supported".to_string(),
-                self.unravel_locate(num),
-            )),
+            IntegralNumber::OctalNumber(_) => {
+                VerilogError::new(self.ast, num, "Octal numbers are not supported".to_string())
+            }
             IntegralNumber::BinaryNumber(x) => Ok(self.visit_binary_number(x)),
             IntegralNumber::HexNumber(x) => Ok(self.visit_hex_number(x)),
         }
     }
 
     /// For parsing most parameters
-    fn visit_number(&self, num: &Number) -> Result<Parameter, ErrorMsg> {
+    fn visit_number(&self, num: &Number) -> Result<Parameter, VerilogError> {
         match num {
             Number::IntegralNumber(x) => self.visit_integral_number(x),
-            Number::RealNumber(_) => Err((
-                "Real numbers are not supported".to_string(),
-                self.unravel_locate(num),
-            )),
+            Number::RealNumber(_) => {
+                VerilogError::new(self.ast, num, "Real numbers are not supported".to_string())
+            }
         }
     }
 
-    fn visit_constant_expression(&self, expr: &ConstantExpression) -> Result<Parameter, ErrorMsg> {
+    fn visit_constant_expression(
+        &self,
+        expr: &ConstantExpression,
+    ) -> Result<Parameter, VerilogError> {
         match expr {
             ConstantExpression::ConstantPrimary(x) => {
                 let refnode: RefNode = x.as_ref().into();
-                let refnode = unwrap_node!(refnode, ConstantPrimary).ok_or((
-                    "Expected a ConstantPrimary node".to_string(),
-                    self.unravel_locate(expr),
-                ))?;
+                let Some(refnode) = unwrap_node!(refnode, ConstantPrimary) else {
+                    return VerilogError::new(
+                        self.ast,
+                        expr,
+                        "Expected a ConstantPrimary node".to_string(),
+                    );
+                };
                 let refnode = unwrap_node!(refnode, PrimaryLiteral);
                 match refnode {
                     Some(RefNode::PrimaryLiteral(x)) => self.visit_primary_literal(x),
-                    _ => Err((
+                    _ => VerilogError::new(
+                        self.ast,
+                        expr,
                         "Expected a PrimaryLiteral node".to_string(),
-                        self.unravel_locate(expr),
-                    )),
+                    ),
                 }
             }
-            ConstantExpression::Binary(_) => Err((
+            ConstantExpression::Binary(_) => VerilogError::new(
+                self.ast,
+                expr,
                 "Binary expressions are not supported".to_string(),
-                self.unravel_locate(expr),
-            )),
-            ConstantExpression::Unary(_) => Err((
+            ),
+            ConstantExpression::Unary(_) => VerilogError::new(
+                self.ast,
+                expr,
                 "Unary expressions are not supported".to_string(),
-                self.unravel_locate(expr),
-            )),
-            ConstantExpression::Ternary(_) => Err((
+            ),
+            ConstantExpression::Ternary(_) => VerilogError::new(
+                self.ast,
+                expr,
                 "Ternary expressions are not supported".to_string(),
-                self.unravel_locate(expr),
-            )),
-            ConstantExpression::Inside(_) => Err((
+            ),
+            ConstantExpression::Inside(_) => VerilogError::new(
+                self.ast,
+                expr,
                 "Inside expressions are not supported".to_string(),
-                self.unravel_locate(expr),
-            )),
+            ),
         }
     }
 
     fn visit_hierarchical_identifier(
         &self,
         id: &HierarchicalIdentifier,
-    ) -> Result<Identifier, ErrorMsg> {
+    ) -> Result<Identifier, VerilogError> {
         if !id.nodes.1.is_empty() {
-            return Err((
+            return VerilogError::new(
+                self.ast,
+                id,
                 "Hierarchical identifiers with qualifiers are not supported".to_string(),
-                self.unravel_locate(id),
-            ));
+            );
         }
         Ok(self.visit_identifier(&id.nodes.2))
     }
 
-    fn visit_select(&self, select: &Select) -> Result<Option<u64>, ErrorMsg> {
+    fn visit_select(&self, select: &Select) -> Result<Option<u64>, VerilogError> {
         let refnode: RefNode = select.into();
         let Some(refnode) = unwrap_node!(refnode, BitSelect) else {
             return Ok(None);
@@ -328,22 +327,24 @@ impl<'a> SemanticVisitor<'a> {
         match refnode {
             Some(RefNode::PrimaryLiteral(x)) => match self.visit_primary_literal(x)? {
                 Parameter::Integer(i) => Ok(Some(i)),
-                _ => Err((
+                _ => VerilogError::new(
+                    self.ast,
+                    select,
                     "Expected an integer for the select expression".to_string(),
-                    self.unravel_locate(select),
-                )),
+                ),
             },
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                select,
                 "Expected a PrimaryLiteral node".to_string(),
-                self.unravel_locate(select),
-            )),
+            ),
         }
     }
 
     fn visit_hierarchical_primary(
         &self,
         primary: &PrimaryHierarchical,
-    ) -> Result<Identifier, ErrorMsg> {
+    ) -> Result<Identifier, VerilogError> {
         let id = self.visit_hierarchical_identifier(&primary.nodes.1)?;
         let select = self.visit_select(&primary.nodes.2)?;
         match select {
@@ -352,123 +353,136 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_primary_literal(&self, literal: &PrimaryLiteral) -> Result<Parameter, ErrorMsg> {
+    fn visit_primary_literal(&self, literal: &PrimaryLiteral) -> Result<Parameter, VerilogError> {
         match literal {
             PrimaryLiteral::Number(x) => self.visit_number(x),
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                literal,
                 "Only number literals are supported".to_string(),
-                self.unravel_locate(literal),
-            )),
+            ),
         }
     }
 
-    fn visit_primary(&self, primary: &Primary) -> Result<IdentifierOrLogic, ErrorMsg> {
+    fn visit_primary(&self, primary: &Primary) -> Result<IdentifierOrLogic, VerilogError> {
         match primary {
             Primary::Hierarchical(h) => Ok(IdentifierOrLogic::Identifier(
                 self.visit_hierarchical_primary(h)?,
             )),
             Primary::PrimaryLiteral(literal) => match self.visit_primary_literal(literal)? {
                 Parameter::Logic(l) => Ok(IdentifierOrLogic::Logic(l)),
-                _ => Err((
+                _ => VerilogError::new(
+                    self.ast,
+                    primary,
                     "Only logical literals are supported".to_string(),
-                    self.unravel_locate(primary),
-                )),
+                ),
             },
-            _ => Err((
-                "Only hierarchical primary expressions and literals are supported".to_string(),
-                self.unravel_locate(primary),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                primary,
+                "Only hierarchical identifiers and logical literals are supported".to_string(),
+            ),
         }
     }
 
     /// For parsing connections
-    fn visit_expression(&self, expr: &Expression) -> Result<IdentifierOrLogic, ErrorMsg> {
+    fn visit_expression(&self, expr: &Expression) -> Result<IdentifierOrLogic, VerilogError> {
         match expr {
             Expression::Primary(p) => self.visit_primary(p),
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                expr,
                 "Only primary expressions are supported".to_string(),
-                self.unravel_locate(expr),
-            )),
+            ),
         }
     }
 
     fn visit_mintypmax_expression(
         &self,
         expr: &MintypmaxExpression,
-    ) -> Result<Parameter, ErrorMsg> {
+    ) -> Result<Parameter, VerilogError> {
         match expr {
             MintypmaxExpression::Expression(e) => {
                 let refnode: RefNode = e.as_ref().into();
                 let refnode = unwrap_node!(refnode, Number);
                 match refnode {
                     Some(RefNode::Number(x)) => self.visit_number(x),
-                    _ => Err((
-                        "Expected a Number parameter".to_string(),
-                        self.unravel_locate(expr),
-                    )),
+                    _ => {
+                        VerilogError::new(self.ast, expr, "Expected a Number parameter".to_string())
+                    }
                 }
             }
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                expr,
                 "Ternary in params not supported".to_string(),
-                self.unravel_locate(expr),
-            )),
+            ),
         }
     }
 
     /// For parsinging parameter argument values
-    fn visit_param_expression(&self, expr: &ParamExpression) -> Result<Parameter, ErrorMsg> {
+    fn visit_param_expression(&self, expr: &ParamExpression) -> Result<Parameter, VerilogError> {
         match expr {
             ParamExpression::MintypmaxExpression(e) => self.visit_mintypmax_expression(e),
-            _ => Err((
-                "Only expressions for parameters are supported".to_string(),
-                self.unravel_locate(expr),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                expr,
+                "Only expression for parameters are supported".to_string(),
+            ),
         }
     }
 
-    fn visit_constant_range(&self, range: &ConstantRange) -> Result<(u64, u64), ErrorMsg> {
+    fn visit_constant_range(&self, range: &ConstantRange) -> Result<(u64, u64), VerilogError> {
         let l = self.visit_constant_expression(&range.nodes.0)?;
         let r = self.visit_constant_expression(&range.nodes.2)?;
         let Parameter::Integer(l) = l else {
-            return Err((
+            return VerilogError::new(
+                self.ast,
+                range,
                 "Expected an integer for the left side of range".to_string(),
-                self.unravel_locate(range),
-            ));
+            );
         };
         let Parameter::Integer(r) = r else {
-            return Err((
-                "Expected an integer for the left side of range".to_string(),
-                self.unravel_locate(range),
-            ));
+            return VerilogError::new(
+                self.ast,
+                range,
+                "Expected an integer for the right side of range".to_string(),
+            );
         };
         Ok((l, r))
     }
 
     /// For parsing bus decl component
-    fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(u64, u64), ErrorMsg> {
+    fn visit_packed_dimension(&self, dim: &PackedDimension) -> Result<(u64, u64), VerilogError> {
         let refnode: RefNode = dim.into();
-        let refnode = unwrap_node!(refnode, PackedDimensionRange).ok_or((
-            "Expected a PackedDimensionRange node".to_string(),
-            self.unravel_locate(dim),
-        ))?;
-        let refnode = unwrap_node!(refnode, ConstantRange).ok_or((
-            "Expected a ConstantRange node".to_string(),
-            self.unravel_locate(dim),
-        ))?;
+        let Some(refnode) = unwrap_node!(refnode, PackedDimensionRange) else {
+            return VerilogError::new(
+                self.ast,
+                dim,
+                "Expected a PackedDimensionRange node".to_string(),
+            );
+        };
+        let Some(refnode) = unwrap_node!(refnode, ConstantRange) else {
+            return VerilogError::new(self.ast, dim, "Expected a ConstantRange node".to_string());
+        };
         match refnode {
             RefNode::ConstantRange(x) => self.visit_constant_range(x),
             _ => unreachable!(),
         }
     }
 
-    fn visit_net_port_type_data_type(&self, ntype: &NetPortTypeDataType) -> Result<u64, ErrorMsg> {
+    fn visit_net_port_type_data_type(
+        &self,
+        ntype: &NetPortTypeDataType,
+    ) -> Result<u64, VerilogError> {
         let wire = &ntype.nodes.0;
 
         if !matches!(wire, Some(NetType::Wire(_)) | None) {
-            return Err((
-                format!("Only wire type net port types are supported ({wire:?})"),
-                Locate::default(),
-            ));
+            return VerilogError::new(
+                self.ast,
+                ntype,
+                "Only wire net types are supported".to_string(),
+            );
         }
 
         let nefnode: RefNode = ntype.into();
@@ -478,10 +492,11 @@ impl<'a> SemanticVisitor<'a> {
             Some(RefNode::PackedDimension(x)) => {
                 let (l, r) = self.visit_packed_dimension(x)?;
                 if r != 0 || l <= r {
-                    return Err((
-                        "Bus range should be N-1:0".to_string(),
-                        self.unravel_locate(ntype),
-                    ));
+                    return VerilogError::new(
+                        self.ast,
+                        ntype,
+                        "Bus range should start at zero (msb first)".to_string(),
+                    );
                 }
                 Ok(l + 1)
             }
@@ -490,58 +505,58 @@ impl<'a> SemanticVisitor<'a> {
     }
 
     /// Visit net port type to get bw
-    fn visit_net_port_type(&self, ntype: &NetPortType) -> Result<u64, ErrorMsg> {
+    fn visit_net_port_type(&self, ntype: &NetPortType) -> Result<u64, VerilogError> {
         match ntype {
             NetPortType::DataType(d) => self.visit_net_port_type_data_type(d),
-            _ => Err((
-                "Only data type net port types are supported".to_string(),
-                self.unravel_locate(ntype),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                ntype,
+                "Only data typed net ports are supported".to_string(),
+            ),
         }
     }
 
     fn visit_net_port_header<'b>(
         &self,
         ph: &'b NetPortHeader,
-    ) -> Result<(&'b PortDirection, u64), ErrorMsg> {
+    ) -> Result<(&'b PortDirection, u64), VerilogError> {
         let pt = self.visit_net_port_type(&ph.nodes.1)?;
         let direction = &ph.nodes.0;
         match direction {
             Some(dir) => Ok((dir, pt)),
-            None => Err((
-                "Port direction is required".to_string(),
-                self.unravel_locate(ph),
-            )),
+            None => VerilogError::new(self.ast, ph, "Expected a port direction".to_string()),
         }
     }
 
     fn visit_constant_bit_select(
         &self,
         select: &ConstantBitSelect,
-    ) -> Result<Option<u64>, ErrorMsg> {
+    ) -> Result<Option<u64>, VerilogError> {
         let expr = &select.nodes.0;
         if expr.is_empty() {
             return Ok(None);
         }
         if expr.len() != 1 {
-            return Err((
-                "Only single bit selects are supported".to_string(),
-                self.unravel_locate(select),
-            ));
+            return VerilogError::new(
+                self.ast,
+                select,
+                "Expected a single expression for the bit select".to_string(),
+            );
         }
         let expr = &expr[0];
         let param = self.visit_constant_expression(&expr.nodes.1)?;
         if let Parameter::Integer(i) = param {
             Ok(Some(i))
         } else {
-            Err((
-                "Expected an integer for the bit select expression".to_string(),
-                self.unravel_locate(select),
-            ))
+            VerilogError::new(
+                self.ast,
+                select,
+                "Expected an integer for the bit select".to_string(),
+            )
         }
     }
 
-    fn visit_constant_select(&self, select: &ConstantSelect) -> Result<Option<u64>, ErrorMsg> {
+    fn visit_constant_select(&self, select: &ConstantSelect) -> Result<Option<u64>, VerilogError> {
         self.visit_constant_bit_select(&select.nodes.1)
     }
 }
@@ -576,26 +591,17 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         }
     }
 
-    fn visit(mut self) -> Result<Items<I>, (&'a SyntaxTree, ErrorMsg)> {
-        let root = self.ast.into_iter().next().ok_or((
-            self.ast,
-            ("SourceText is empty".to_string(), Locate::default()),
-        ))?;
+    fn visit(mut self) -> Result<Items<I>, VerilogError> {
+        let Some(root) = self.ast.into_iter().next() else {
+            return Err(VerilogError::default());
+        };
 
         let decl = unwrap_node!(root, ModuleDeclaration);
 
         match decl {
-            Some(RefNode::ModuleDeclaration(x)) => self
-                .visit_module_declaration(x)
-                .map_err(|e| (self.ast, e))?,
+            Some(RefNode::ModuleDeclaration(x)) => self.visit_module_declaration(x)?,
             _ => {
-                return Err((
-                    self.ast,
-                    (
-                        "Expected a ModuleDeclaration node".to_string(),
-                        Locate::default(),
-                    ),
-                ));
+                return Err(VerilogError::default());
             }
         }
 
@@ -607,7 +613,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         self.netlist.set_name(id.to_string())
     }
 
-    fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), ErrorMsg> {
+    fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), VerilogError> {
         let id: RefNode = decl.into();
         let id = unwrap_node!(id, ModuleIdentifier).unwrap();
         match id {
@@ -635,10 +641,11 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
                 }
             }
             _ => {
-                return Err((
-                    "Unsupported type of module declaration".to_string(),
-                    self.lookup.unravel_locate(decl),
-                ));
+                return VerilogError::new(
+                    self.ast,
+                    decl,
+                    "Only ANSI and Non-ANSI module declarations are supported".to_string(),
+                );
             }
         }
 
@@ -648,7 +655,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_input_declaration_net(
         &mut self,
         decl: &InputDeclarationNet,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         let ntype = self.lookup.visit_net_port_type(&decl.nodes.1)?;
         let list = &decl.nodes.2;
         let ids = self.lookup.visit_list_of_port_identifiers(list)?;
@@ -674,20 +681,21 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_input_declaration(
         &mut self,
         decl: &InputDeclaration,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match decl {
             InputDeclaration::Net(n) => self.visit_input_declaration_net(n),
-            InputDeclaration::Variable(_) => Err((
+            InputDeclaration::Variable(_) => VerilogError::new(
+                self.ast,
+                decl,
                 "Variable input declarations are not supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            )),
+            ),
         }
     }
 
     fn visit_output_declaration_net(
         &mut self,
         decl: &OutputDeclarationNet,
-    ) -> Result<(), ErrorMsg> {
+    ) -> Result<(), VerilogError> {
         let ntype = self.lookup.visit_net_port_type(&decl.nodes.1)?;
         let list = &decl.nodes.2;
         let ids = self.lookup.visit_list_of_port_identifiers(list)?;
@@ -707,44 +715,46 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         Ok(())
     }
 
-    fn visit_output_declaration(&mut self, decl: &OutputDeclaration) -> Result<(), ErrorMsg> {
+    fn visit_output_declaration(&mut self, decl: &OutputDeclaration) -> Result<(), VerilogError> {
         match decl {
             OutputDeclaration::Net(n) => self.visit_output_declaration_net(n),
-            OutputDeclaration::Variable(_) => Err((
+            OutputDeclaration::Variable(_) => VerilogError::new(
+                self.ast,
+                decl,
                 "Variable output declarations are not supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            )),
+            ),
         }
     }
 
     fn visit_port_declaration_input(
         &mut self,
         decl: &PortDeclarationInput,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         self.visit_input_declaration(&decl.nodes.1)
     }
 
     fn visit_port_declaration_output(
         &mut self,
         decl: &PortDeclarationOutput,
-    ) -> Result<(), ErrorMsg> {
+    ) -> Result<(), VerilogError> {
         self.visit_output_declaration(&decl.nodes.1)
     }
 
     fn visit_port_declaration(
         &mut self,
         decl: &PortDeclaration,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match decl {
             PortDeclaration::Input(input) => self.visit_port_declaration_input(input),
             PortDeclaration::Output(output) => {
                 self.visit_port_declaration_output(output)?;
                 Ok(vec![])
             }
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                decl,
                 "Only input and output port declarations are supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            )),
+            ),
         }
     }
 
@@ -752,22 +762,24 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         conn: &NamedPortConnectionIdentifier,
-    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), VerilogError> {
         let port = self.lookup.visit_port_identifier(&conn.nodes.2);
         let Some(c) = &conn.nodes.3 else {
-            return Err((
-                "Expected a connection expression".to_string(),
-                self.lookup.unravel_locate(conn),
-            ));
+            return VerilogError::new(
+                self.ast,
+                conn,
+                "Expected a connection with expression".to_string(),
+            );
         };
 
         let c = &c.nodes.1;
 
         let Some(expr) = c else {
-            return Err((
-                "Expected a connection expression".to_string(),
-                self.lookup.unravel_locate(conn),
-            ));
+            return VerilogError::new(
+                self.ast,
+                conn,
+                "Expected a connection with expression".to_string(),
+            );
         };
 
         let c = self.lookup.visit_expression(expr)?;
@@ -775,10 +787,11 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             (Some(input), None) => (input, false),
             (None, Some(output)) => (output, true),
             (None, None) => {
-                return Err((
-                    format!("Port {port} not found on instance"),
-                    self.lookup.unravel_locate(conn),
-                ));
+                return VerilogError::new(
+                    self.ast,
+                    conn,
+                    format!("Port {} not found in instance", port),
+                );
             }
             _ => unreachable!(),
         };
@@ -790,15 +803,16 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         conn: &NamedPortConnection,
-    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), VerilogError> {
         match conn {
             NamedPortConnection::Identifier(id) => {
                 self.visit_named_port_connection_identifier(inst, id)
             }
-            NamedPortConnection::Asterisk(_) => Err((
+            NamedPortConnection::Asterisk(_) => VerilogError::new(
+                self.ast,
+                conn,
                 "Asterisk port connections are not supported".to_string(),
-                self.lookup.unravel_locate(conn),
-            )),
+            ),
         }
     }
 
@@ -806,7 +820,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         list: &ListOfPortConnectionsNamed,
-    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, VerilogError> {
         let list = &list.nodes.0;
         let mut res = Vec::new();
         for c in list.contents() {
@@ -819,15 +833,16 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &self,
         inst: &I,
         list: &ListOfPortConnections,
-    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, VerilogError> {
         match list {
             ListOfPortConnections::Named(list) => {
                 self.visit_list_of_port_connections_named(inst, list)
             }
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                list,
                 "Only named port connections are supported".to_string(),
-                self.lookup.unravel_locate(list),
-            )),
+            ),
         }
     }
 
@@ -835,7 +850,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &mut self,
         i: I,
         inst: &HierarchicalInstance,
-    ) -> Result<NetRef<I>, ErrorMsg> {
+    ) -> Result<NetRef<I>, VerilogError> {
         let name = &inst.nodes.0;
         let name = &name.nodes.0;
         let name = self.lookup.visit_instance_identifier(name);
@@ -875,15 +890,16 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_named_parameter_assignment(
         &self,
         p: &NamedParameterAssignment,
-    ) -> Result<(Identifier, Parameter), ErrorMsg> {
+    ) -> Result<(Identifier, Parameter), VerilogError> {
         let key = self.lookup.visit_parameter_identifier(&p.nodes.1);
         let val = &p.nodes.2;
         let val = &val.nodes.1;
         let Some(val) = val else {
-            return Err((
-                "Expected a parameter value".to_string(),
-                self.lookup.unravel_locate(p),
-            ));
+            return VerilogError::new(
+                self.ast,
+                p,
+                "Expected a parameter assignment value".to_string(),
+            );
         };
 
         let val = self.lookup.visit_param_expression(val)?;
@@ -894,7 +910,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_list_of_parameter_assignments_named(
         &self,
         list: &ListOfParameterAssignmentsNamed,
-    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+    ) -> Result<Vec<(Identifier, Parameter)>, VerilogError> {
         let list = &list.nodes.0;
         let mut res = Vec::new();
         for p in list.contents() {
@@ -906,22 +922,23 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_list_of_parameter_assignments(
         &self,
         list: &ListOfParameterAssignments,
-    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+    ) -> Result<Vec<(Identifier, Parameter)>, VerilogError> {
         match list {
             ListOfParameterAssignments::Named(list) => {
                 self.visit_list_of_parameter_assignments_named(list)
             }
-            ListOfParameterAssignments::Ordered(_) => Err((
-                "Ordered parameter assignments are not supported".to_string(),
-                self.lookup.unravel_locate(list),
-            )),
+            ListOfParameterAssignments::Ordered(_) => VerilogError::new(
+                self.ast,
+                list,
+                "Only named parameter assignments are supported".to_string(),
+            ),
         }
     }
 
     fn visit_parameter_value_assignment(
         &self,
         p: &ParameterValueAssignment,
-    ) -> Result<Vec<(Identifier, Parameter)>, ErrorMsg> {
+    ) -> Result<Vec<(Identifier, Parameter)>, VerilogError> {
         let list = &p.nodes.1;
         let list = &list.nodes.1;
         match list {
@@ -933,14 +950,15 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_module_instantiation(
         &mut self,
         inst: &ModuleInstantiation,
-    ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
+    ) -> Result<Vec<NetRef<I>>, VerilogError> {
         let inst_type_name = self.lookup.visit_module_identifier(&inst.nodes.0);
-        let inst_type = I::from_id(&inst_type_name).map_err(|e| {
-            (
-                format!("Unknown instantiable type: {}", e),
-                self.lookup.unravel_locate(inst),
-            )
-        })?;
+        let Ok(inst_type) = I::from_id(&inst_type_name) else {
+            return VerilogError::new(
+                self.ast,
+                inst,
+                format!("Unknown primitive type: {}", inst_type_name),
+            );
+        };
 
         let mut inst_type = match (self.overrides)(&inst_type_name, &inst_type) {
             Some(overridden) => overridden,
@@ -966,50 +984,50 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_package_or_generate_item_declaration(
         &self,
         item: &PackageOrGenerateItemDeclaration,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             PackageOrGenerateItemDeclaration::NetDeclaration(decl) => match decl.as_ref() {
                 NetDeclaration::NetType(ntype) => {
                     if !matches!(ntype.nodes.0, NetType::Wire(_)) {
-                        Err((
-                            "Only wire typed declarations are supported".to_string(),
-                            self.lookup.unravel_locate(item),
-                        ))
+                        VerilogError::new(
+                            self.ast,
+                            item,
+                            "Only wire net types are supported".to_string(),
+                        )
                     } else {
                         Ok(vec![])
                     }
                 }
-                _ => Err((
-                    "Only wire typed declarations are supported".to_string(),
-                    self.lookup.unravel_locate(item),
-                )),
+                _ => VerilogError::new(
+                    self.ast,
+                    item,
+                    "Only wire net types are supported".to_string(),
+                ),
             },
-            _ => Err((
-                "Only wire decl constructs are allowed".to_string(),
-                self.lookup.unravel_locate(item),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                item,
+                "Only wire net types are supported".to_string(),
+            ),
         }
     }
 
     fn visit_module_or_generate_item_declaration(
         &self,
         item: &ModuleOrGenerateItemDeclaration,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             ModuleOrGenerateItemDeclaration::PackageOrGenerateItemDeclaration(pkg) => {
                 self.visit_package_or_generate_item_declaration(pkg)
             }
-            _ => Err((
-                "Only wire decl constructs are allowed".to_string(),
-                self.lookup.unravel_locate(item),
-            )),
+            _ => VerilogError::new(self.ast, item, "Only wire decls are supported".to_string()),
         }
     }
 
     fn visit_module_common_item(
         &self,
         item: &ModuleCommonItem,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             ModuleCommonItem::ModuleOrGenerateItemDeclaration(decl) => {
                 self.visit_module_or_generate_item_declaration(decl)
@@ -1019,31 +1037,32 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             {
                 Ok(vec![])
             }
-            _ => Err((
-                "Only wire decl and assignment constructs are allowed".to_string(),
-                self.lookup.unravel_locate(item),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                item,
+                "Only wire decls and continuous assignments are supported".to_string(),
+            ),
         }
     }
 
     fn visit_module_or_generate_item_module_item(
         &self,
         item: &ModuleOrGenerateItemModuleItem,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         self.visit_module_common_item(&item.nodes.1)
     }
 
     fn visit_module_or_generate_item_module(
         &mut self,
         item: &ModuleOrGenerateItemModule,
-    ) -> Result<Vec<NetRef<I>>, ErrorMsg> {
+    ) -> Result<Vec<NetRef<I>>, VerilogError> {
         self.visit_module_instantiation(&item.nodes.1)
     }
 
     fn visit_module_or_generate_item(
         &mut self,
         item: &ModuleOrGenerateItem,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             ModuleOrGenerateItem::Module(m) => Ok(self
                 .visit_module_or_generate_item_module(m)?
@@ -1053,29 +1072,31 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             ModuleOrGenerateItem::ModuleItem(mi) => {
                 self.visit_module_or_generate_item_module_item(mi)
             }
-            _ => Err((
-                "Only cell instances and wires are allowed".to_string(),
-                self.lookup.unravel_locate(item),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                item,
+                "Only cells instances and wire assignments are supported".to_string(),
+            ),
         }
     }
 
     fn visit_non_port_module_item(
         &mut self,
         item: &NonPortModuleItem,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             NonPortModuleItem::ModuleOrGenerateItem(item) => {
                 self.visit_module_or_generate_item(item)
             }
-            _ => Err((
-                "Only cell instances and wires are allowed".to_string(),
-                self.lookup.unravel_locate(item),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                item,
+                "Only cells instances and wire assignments are supported".to_string(),
+            ),
         }
     }
 
-    fn visit_module_item(&mut self, item: &ModuleItem) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    fn visit_module_item(&mut self, item: &ModuleItem) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
             ModuleItem::NonPortModuleItem(item) => self.visit_non_port_module_item(item),
             ModuleItem::PortDeclaration(p) => self.visit_port_declaration(&p.0),
@@ -1085,12 +1106,13 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     fn visit_ansi_port_declaration_net(
         &mut self,
         decl: &AnsiPortDeclarationNet,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         if !decl.nodes.2.is_empty() {
-            return Err((
-                "Only simple port declarations are supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            ));
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only simple port declarations are supported (no unpacked dims)".to_string(),
+            );
         }
 
         let id = self.lookup.visit_port_identifier(&decl.nodes.1);
@@ -1100,10 +1122,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
                 self.lookup.visit_net_port_header(ph)?
             }
             _ => {
-                return Err((
-                    "Net port header is required".to_string(),
-                    self.lookup.unravel_locate(decl),
-                ));
+                return VerilogError::new(self.ast, decl, "Net port header required".to_string());
             }
         };
 
@@ -1130,30 +1149,32 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
                 }
                 Ok(vec![])
             }
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                decl,
                 "Only input and output port directions are supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            )),
+            ),
         }
     }
 
     fn visit_ansi_port_declaration(
         &mut self,
         decl: &AnsiPortDeclaration,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match decl {
             AnsiPortDeclaration::Net(net) => self.visit_ansi_port_declaration_net(net),
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                decl,
                 "Only net port declarations are supported".to_string(),
-                self.lookup.unravel_locate(decl),
-            )),
+            ),
         }
     }
 
     fn visit_list_of_port_declarations(
         &mut self,
         list: &ListOfPortDeclarations,
-    ) -> Result<Vec<DrivenNet<I>>, ErrorMsg> {
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         let list = &list.nodes.0;
         let list = &list.nodes.1;
         match list {
@@ -1199,12 +1220,10 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
         }
     }
 
-    fn visit(mut self) -> Result<Wires<I>, (&'a SyntaxTree, ErrorMsg)> {
+    fn visit(mut self) -> Result<Wires<I>, VerilogError> {
         for n in self.ast {
             if let RefNode::ContinuousAssign(assign) = n {
-                self.changed |= self
-                    .visit_continuous_assign(assign)
-                    .map_err(|e| (self.ast, e))?;
+                self.changed |= self.visit_continuous_assign(assign)?;
             }
         }
 
@@ -1214,7 +1233,7 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn visit_hierarchical_net_identifier(
         &self,
         id: &HierarchicalNetIdentifier,
-    ) -> Result<Identifier, ErrorMsg> {
+    ) -> Result<Identifier, VerilogError> {
         self.lookup.visit_hierarchical_identifier(&id.nodes.0)
     }
 
@@ -1228,7 +1247,7 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn visit_ps_or_hierarchical_net_identifier(
         &self,
         id: &PsOrHierarchicalNetIdentifier,
-    ) -> Result<Identifier, ErrorMsg> {
+    ) -> Result<Identifier, VerilogError> {
         match id {
             PsOrHierarchicalNetIdentifier::HierarchicalNetIdentifier(id) => {
                 self.visit_hierarchical_net_identifier(id)
@@ -1242,7 +1261,7 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn visit_net_lvalue_identifier(
         &self,
         id: &NetLvalueIdentifier,
-    ) -> Result<Identifier, ErrorMsg> {
+    ) -> Result<Identifier, VerilogError> {
         let ident = self.visit_ps_or_hierarchical_net_identifier(&id.nodes.0)?;
         let select = self.lookup.visit_constant_select(&id.nodes.1)?;
         match select {
@@ -1251,17 +1270,18 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
         }
     }
 
-    fn visit_net_lvalue(&self, lvalue: &NetLvalue) -> Result<Identifier, ErrorMsg> {
+    fn visit_net_lvalue(&self, lvalue: &NetLvalue) -> Result<Identifier, VerilogError> {
         match lvalue {
             NetLvalue::Identifier(id) => self.visit_net_lvalue_identifier(id),
-            _ => Err((
-                "Only identifier lvalues are supported".to_string(),
-                self.lookup.unravel_locate(lvalue),
-            )),
+            _ => VerilogError::new(
+                self.ast,
+                lvalue,
+                "Only net lvalue identifiers are supported".to_string(),
+            ),
         }
     }
 
-    fn visit_net_assignment(&mut self, assign: &NetAssignment) -> Result<bool, ErrorMsg> {
+    fn visit_net_assignment(&mut self, assign: &NetAssignment) -> Result<bool, VerilogError> {
         let lhs = &assign.nodes.0;
         let rhs = &assign.nodes.2;
         let lhs = self.visit_net_lvalue(lhs)?;
@@ -1271,10 +1291,11 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
             IdentifierOrLogic::Identifier(id) => id,
             IdentifierOrLogic::Logic(val) => {
                 let Some(inst) = I::from_constant(val) else {
-                    return Err((
+                    return VerilogError::new(
+                        self.ast,
+                        assign,
                         "Instiable type does not support constant".to_string(),
-                        self.lookup.unravel_locate(assign),
-                    ));
+                    );
                 };
                 let inst_name = lhs.clone() + "const".into();
                 let net_name = lhs.clone() + "const_net".into();
@@ -1307,7 +1328,7 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn visit_list_of_net_assignments(
         &mut self,
         assign: &ListOfNetAssignments,
-    ) -> Result<bool, ErrorMsg> {
+    ) -> Result<bool, VerilogError> {
         let mut changed = false;
         for stmt in assign.nodes.0.contents() {
             changed |= self.visit_net_assignment(stmt)?;
@@ -1318,18 +1339,19 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     fn visit_continuous_assign_net(
         &mut self,
         assign: &ContinuousAssignNet,
-    ) -> Result<bool, ErrorMsg> {
+    ) -> Result<bool, VerilogError> {
         let list = &assign.nodes.3;
         self.visit_list_of_net_assignments(list)
     }
 
-    fn visit_continuous_assign(&mut self, assign: &ContinuousAssign) -> Result<bool, ErrorMsg> {
+    fn visit_continuous_assign(&mut self, assign: &ContinuousAssign) -> Result<bool, VerilogError> {
         match assign {
             ContinuousAssign::Net(assign) => self.visit_continuous_assign_net(assign),
-            ContinuousAssign::Variable(_) => Err((
-                "Variable assignments are not supported".to_string(),
-                self.lookup.unravel_locate(assign),
-            )),
+            ContinuousAssign::Variable(_) => VerilogError::new(
+                self.ast,
+                assign,
+                "Variable continuous assignments are not supported".to_string(),
+            ),
         }
     }
 }
@@ -1345,10 +1367,7 @@ fn set_default_drivers<I: Instantiable>(
             let inst =
                 I::from_constant(Logic::Z).unwrap_or(I::from_constant(Logic::False).unwrap());
             let id = output.clone() + "default_logic".into();
-            let net = netlist
-                .insert_gate(inst, id, &[])
-                .map_err(|e| VerilogError::SafetyNetError(None, e))?
-                .get_output(0);
+            let net = netlist.insert_gate(inst, id, &[]).unwrap().get_output(0);
             netlist.expose_net_with_name(net.clone(), output.clone());
             drivers.insert(output.clone(), net);
         }
@@ -1381,11 +1400,10 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         }
     }
 
-    fn visit(self) -> Result<(), (&'a SyntaxTree, ErrorMsg)> {
+    fn visit(self) -> Result<(), VerilogError> {
         for n in self.ast {
             if let RefNode::HierarchicalInstance(inst) = n {
-                self.visit_hierarchical_instance(inst)
-                    .map_err(|e| (self.ast, e))?;
+                self.visit_hierarchical_instance(inst)?
             }
         }
         Ok(())
@@ -1395,22 +1413,24 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         conn: &NamedPortConnectionIdentifier,
-    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), VerilogError> {
         let port = self.lookup.visit_port_identifier(&conn.nodes.2);
         let Some(c) = &conn.nodes.3 else {
-            return Err((
-                "Expected a connection expression".to_string(),
-                self.lookup.unravel_locate(conn),
-            ));
+            return VerilogError::new(
+                self.ast,
+                conn,
+                "Expected a connection with expression".to_string(),
+            );
         };
 
         let c = &c.nodes.1;
 
         let Some(expr) = c else {
-            return Err((
-                "Expected a connection expression".to_string(),
-                self.lookup.unravel_locate(conn),
-            ));
+            return VerilogError::new(
+                self.ast,
+                conn,
+                "Expected a connection with expression".to_string(),
+            );
         };
 
         let c = self.lookup.visit_expression(expr)?;
@@ -1418,10 +1438,11 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
             (Some(input), None) => (input, false),
             (None, Some(output)) => (output, true),
             (None, None) => {
-                return Err((
-                    format!("Port {port} not found on instance"),
-                    self.lookup.unravel_locate(conn),
-                ));
+                return VerilogError::new(
+                    self.ast,
+                    conn,
+                    format!("Port {} not found in instance", port),
+                );
             }
             _ => unreachable!(),
         };
@@ -1433,15 +1454,16 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         conn: &NamedPortConnection,
-    ) -> Result<(usize, bool, IdentifierOrLogic), ErrorMsg> {
+    ) -> Result<(usize, bool, IdentifierOrLogic), VerilogError> {
         match conn {
             NamedPortConnection::Identifier(id) => {
                 self.visit_named_port_connection_identifier(inst, id)
             }
-            NamedPortConnection::Asterisk(_) => Err((
+            NamedPortConnection::Asterisk(_) => VerilogError::new(
+                self.ast,
+                conn,
                 "Asterisk port connections are not supported".to_string(),
-                self.lookup.unravel_locate(conn),
-            )),
+            ),
         }
     }
 
@@ -1449,7 +1471,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         list: &ListOfPortConnectionsNamed,
-    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, VerilogError> {
         let list = &list.nodes.0;
         let mut res = Vec::new();
         for c in list.contents() {
@@ -1462,26 +1484,30 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
         &self,
         inst: &I,
         list: &ListOfPortConnections,
-    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, ErrorMsg> {
+    ) -> Result<Vec<(usize, bool, IdentifierOrLogic)>, VerilogError> {
         match list {
             ListOfPortConnections::Named(list) => {
                 self.visit_list_of_port_connections_named(inst, list)
             }
-            _ => Err((
+            _ => VerilogError::new(
+                self.ast,
+                list,
                 "Only named port connections are supported".to_string(),
-                self.lookup.unravel_locate(list),
-            )),
+            ),
         }
     }
 
-    fn visit_hierarchical_instance(&self, inst: &HierarchicalInstance) -> Result<(), ErrorMsg> {
+    fn visit_hierarchical_instance(&self, inst: &HierarchicalInstance) -> Result<(), VerilogError> {
         let name = &inst.nodes.0;
         let name = &name.nodes.0;
         let name = self.lookup.visit_instance_identifier(name);
-        let nr = self.instances.get(&name).ok_or((
-            format!("Instance {name} not inserted into netlist"),
-            self.lookup.unravel_locate(inst),
-        ))?;
+        let Some(nr) = self.instances.get(&name) else {
+            return VerilogError::new(
+                self.ast,
+                inst,
+                format!("Instance {} not found in netlist", name),
+            );
+        };
 
         let connections = &inst.nodes.1;
         let connections = &connections.nodes.1;
@@ -1497,10 +1523,11 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
                         IdentifierOrLogic::Identifier(id) => self.drivers[&id].clone(),
                         IdentifierOrLogic::Logic(val) => {
                             let Some(inst) = I::from_constant(val) else {
-                                return Err((
+                                return VerilogError::new(
+                                    self.ast,
+                                    inst,
                                     "Instiable type does not support constant".to_string(),
-                                    self.lookup.unravel_locate(inst),
-                                ));
+                                );
                             };
                             let inst_name = name.clone()
                                 + i.get_input_port(idx).get_identifier().clone()
@@ -1532,24 +1559,18 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
     let netlist = Netlist::<I>::new("top".to_string());
     let item_visitor = ItemVisitor::new(ast, &netlist, overrides);
-    let (outputs, instances, drivers) = item_visitor
-        .visit()
-        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+    let (outputs, instances, drivers) = item_visitor.visit()?;
 
     let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
     while changing {
         let wire_visitor = WireVisitor::new(ast, &netlist, outputs, drivers);
-        (outputs, changing, drivers) = wire_visitor
-            .visit()
-            .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+        (outputs, changing, drivers) = wire_visitor.visit()?;
     }
 
     set_default_drivers(&outputs, &mut drivers, &netlist)?;
 
     let input_visitor = InputVisitor::new(ast, &netlist, instances, drivers);
-    input_visitor
-        .visit()
-        .map_err(|(_, (s, l))| VerilogError::Other(Some(l), s))?;
+    input_visitor.visit()?;
 
     Ok(netlist)
 }

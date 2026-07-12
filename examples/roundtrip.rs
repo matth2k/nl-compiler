@@ -289,7 +289,13 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let netlist = from_vast::<Gate>(&ast).map_err(std::io::Error::other)?;
+    let netlist = match from_vast::<Gate>(&ast) {
+        Ok(nl) => nl,
+        Err(e) => {
+            eprintln!("{e}");
+            return Err(std::io::Error::other(e));
+        }
+    };
 
     netlist.verify().map_err(std::io::Error::other)?;
 
