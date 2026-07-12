@@ -10,7 +10,7 @@ categories = [
     "science",
 ]
 
-description = "AIG and Verilog frontend compilers"
+description = "Verilog frontend compilation into a memory-safe netlist IR"
 
 documentation = "https://matth2k.github.io/safety-net/"
 homepage = "https://matth2k.github.io/safety-net/"
