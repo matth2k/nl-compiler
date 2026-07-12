@@ -31,7 +31,7 @@ fn sv_parse_wrapper(
 
 ### 2. Define a Cell Library
 
-[safety-net](https://github.com/matth2k/safety-net) netlists are generic to the cell library under an [Instantiable](https://matth2k.github.io/safety-net/safety_net/trait.Instantiable.html) interface. Simply create a cell library that implements this interface. This is where the most of the boiler-plate comes from.
+[safety-net](https://github.com/matth2k/safety-net) netlists are generic to the cell library used via an [Instantiable](https://matth2k.github.io/safety-net/safety_net/trait.Instantiable.html) interface. Simply create a cell library that implements this interface. This is where the most of the boiler-plate comes from.
 
 ```rust
 use safety_net::{Net, Identifier, Instantiable}
@@ -136,8 +136,10 @@ impl Instantiable for Gate {
 ### 3. Compile!
 
 ```rust
+fn main() -> std::io::Result<()> {
+    let mut buf = String::new();
 
-    let buf = // Collect the source Verilog into a string
+    // TODO: Collect the source Verilog into a string
 
     let ast = sv_parse_wrapper(&buf, path).map_err(std::io::Error::other)?;
 
@@ -150,7 +152,10 @@ impl Instantiable for Gate {
     };
 
     netlist.verify().map_err(std::io::Error::other)?;
+    println!("{netlist}");
 
+    Ok(())
+}
 ```
 
 ## Example Netlist
@@ -161,7 +166,7 @@ Here is an example netlist to get you started:
 module and_test (
     input wire a,
     input wire b,
-    input wire y
+    output wire y
 );
 
   AND _0_ (
