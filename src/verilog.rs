@@ -28,8 +28,10 @@ use sv_parser::{
     NetAssignment, NetLvalue, NetLvalueIdentifier,
 };
 use sv_parser::{
-    ConstantRange, HierarchicalNetIdentifier, NetPortType, NetPortTypeDataType, NetType,
-    PackedDimension, PsOrHierarchicalNetIdentifier, PsOrHierarchicalNetIdentifierPackageScope,
+    ConstantRange, DataType, DataTypeOrImplicit, DataTypeType, DataTypeVector,
+    HierarchicalNetIdentifier, ImplicitDataType, IntegerVectorType, NetPortType,
+    NetPortTypeDataType, NetType, PackedDimension, PsOrHierarchicalNetIdentifier,
+    PsOrHierarchicalNetIdentifierPackageScope, TypeIdentifier,
 };
 use sv_parser::{
     EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
@@ -88,6 +90,10 @@ impl<'a> SemanticVisitor<'a> {
     }
 
     fn visit_net_identifier(&self, id: &NetIdentifier) -> Identifier {
+        self.visit_identifier(&id.nodes.0)
+    }
+
+    fn visit_type_identifier(&self, id: &TypeIdentifier) -> Identifier {
         self.visit_identifier(&id.nodes.0)
     }
 
@@ -471,6 +477,119 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
+    fn visit_data_type_vector(&self, dt: &DataTypeVector) -> Result<u64, VerilogError> {
+        let dtype = &dt.nodes.0;
+
+        if !matches!(dtype, IntegerVectorType::Logic(_)) {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Only logic vector data types are supported".to_string(),
+            );
+        }
+
+        let pd = &dt.nodes.2;
+        if pd.is_empty() {
+            return Ok(1);
+        }
+        if pd.len() != 1 {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Expected a single packed dimension for implicit data type".to_string(),
+            );
+        }
+        let pd = &pd[0];
+        let (l, r) = self.visit_packed_dimension(pd)?;
+        if r != 0 || l <= r {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Bus range should start at zero (msb first)".to_string(),
+            );
+        }
+        Ok(l + 1)
+    }
+
+    fn visit_data_type_type(&self, dt: &DataTypeType) -> Result<u64, VerilogError> {
+        let dtype = self.visit_type_identifier(&dt.nodes.1);
+
+        if dtype != "logic".into() && dtype != "wire".into() {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Only logic data types are supported".to_string(),
+            );
+        }
+
+        let pd = &dt.nodes.2;
+        if pd.is_empty() {
+            return Ok(1);
+        }
+        if pd.len() != 1 {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Expected a single packed dimension for implicit data type".to_string(),
+            );
+        }
+        let pd = &pd[0];
+        let (l, r) = self.visit_packed_dimension(pd)?;
+        if r != 0 || l <= r {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Bus range should start at zero (msb first)".to_string(),
+            );
+        }
+        Ok(l + 1)
+    }
+
+    fn visit_data_type(&self, dt: &DataType) -> Result<u64, VerilogError> {
+        match dt {
+            DataType::Vector(vec) => self.visit_data_type_vector(vec),
+            DataType::Type(dtype) => self.visit_data_type_type(dtype),
+            _ => VerilogError::new(
+                self.ast,
+                dt,
+                "Only vector and direct data types are supported".to_string(),
+            ),
+        }
+    }
+
+    fn visit_implicit_data_type(&self, dt: &ImplicitDataType) -> Result<u64, VerilogError> {
+        let pd = &dt.nodes.1;
+        if pd.is_empty() {
+            return Ok(1);
+        }
+        if pd.len() != 1 {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Expected a single packed dimension for implicit data type".to_string(),
+            );
+        }
+        let pd = &pd[0];
+        let (l, r) = self.visit_packed_dimension(pd)?;
+        if r != 0 || l <= r {
+            return VerilogError::new(
+                self.ast,
+                dt,
+                "Bus range should start at zero (msb first)".to_string(),
+            );
+        }
+        Ok(l + 1)
+    }
+
+    fn visit_data_type_or_implicit(&self, dt: &DataTypeOrImplicit) -> Result<u64, VerilogError> {
+        match dt {
+            DataTypeOrImplicit::DataType(dt) => self.visit_data_type(dt),
+            DataTypeOrImplicit::ImplicitDataType(implicit) => {
+                self.visit_implicit_data_type(implicit)
+            }
+        }
+    }
+
     fn visit_net_port_type_data_type(
         &self,
         ntype: &NetPortTypeDataType,
@@ -485,23 +604,7 @@ impl<'a> SemanticVisitor<'a> {
             );
         }
 
-        let nefnode: RefNode = ntype.into();
-        let refnode = unwrap_node!(nefnode, PackedDimension);
-
-        match refnode {
-            Some(RefNode::PackedDimension(x)) => {
-                let (l, r) = self.visit_packed_dimension(x)?;
-                if r != 0 || l <= r {
-                    return VerilogError::new(
-                        self.ast,
-                        ntype,
-                        "Bus range should start at zero (msb first)".to_string(),
-                    );
-                }
-                Ok(l + 1)
-            }
-            _ => Ok(1),
-        }
+        self.visit_data_type_or_implicit(&ntype.nodes.1)
     }
 
     /// Visit net port type to get bw

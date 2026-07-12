@@ -1,6 +1,6 @@
 [package]
 name = "nl-compiler"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -10,7 +10,7 @@ categories = [
     "science",
 ]
 
-description = "AIG and Verilog frontend compilers"
+description = "Verilog frontend compilation into a memory-safe netlist IR"
 
 documentation = "https://matth2k.github.io/safety-net/"
 homepage = "https://matth2k.github.io/safety-net/"
