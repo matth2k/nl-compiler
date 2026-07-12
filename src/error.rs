@@ -5,34 +5,68 @@
 */
 
 use crate::aig::U;
-use std::num::ParseIntError;
-use sv_parser::Locate;
+use std::{fmt::Display, path::PathBuf};
+use sv_parser::{RefNode, RefNodes, SyntaxTree, unwrap_node};
 use thiserror::Error;
 
 /// Errors for Verilog Compilation.
 #[derive(Error, Debug)]
-pub enum VerilogError {
-    /// Errors in parsing ints.
-    #[error("Parsing int error {0} `{1:?}`")]
-    ParseIntError(ParseIntError, Locate),
-    /// Errors in parsing string.
-    #[error("Parsing string error {0:?}")]
-    ParseStrError(Locate),
-    /// A RefNode that was not expected to be compiled.
-    #[error("Unexpected RefNode {0:?} `{1}`")]
-    UnexpectedRefNode(Locate, String),
-    /// A RefNode that is missing.
-    #[error("Missing RefNode `{0}`")]
-    MissingRefNode(String),
-    /// An error originating from `safety-net`.
-    #[error(" `{1}` : {0:?}")]
-    SafetyNetError(Option<Locate>, safety_net::Error),
-    /// An error originating from `sv-parser`.
-    #[error("{0:?}")]
-    ParserError(#[from] sv_parser::Error),
-    /// Any other compilation error
-    #[error(" `{1}` : {0:?}")]
-    Other(Option<Locate>, String),
+pub struct VerilogError {
+    origin: Option<(PathBuf, usize)>,
+    message: String,
+    content: String,
+}
+
+impl VerilogError {
+    /// Create a new error from an AST node
+    pub fn new<'a, T: Into<RefNodes<'a>> + Into<RefNode<'a>> + Clone, K>(
+        ast: &'a SyntaxTree,
+        nodes: T,
+        message: String,
+    ) -> Result<K, Self> {
+        let content = match ast.get_str_trim(nodes.clone()) {
+            Some(s) => s.lines().next().unwrap_or("").to_string(),
+            None => String::new(),
+        };
+        let rn: RefNode<'_> = nodes.into();
+        let locate = match unwrap_node!(rn, Locate) {
+            Some(RefNode::Locate(l)) => Some(*l),
+            _ => None,
+        };
+        let origin = match locate {
+            Some(l) => ast.get_origin(&l),
+            None => None,
+        };
+        let origin = origin.map(|(p, l)| (p.clone(), l));
+        Err(Self {
+            origin,
+            message,
+            content,
+        })
+    }
+}
+
+impl Default for VerilogError {
+    fn default() -> Self {
+        Self {
+            origin: None,
+            message: "Source text is missing".to_string(),
+            content: String::new(),
+        }
+    }
+}
+
+impl Display for VerilogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some((path, line)) = &self.origin {
+            write!(f, "{}:{}: ", path.display(), line)?;
+        }
+        writeln!(f, "{}", self.message)?;
+        if !self.content.is_empty() {
+            writeln!(f, ">    {}", self.content)?;
+        }
+        Ok(())
+    }
 }
 
 /// Errors for AIG Compilation.
