@@ -1,14 +1,15 @@
+use clap::Parser;
+use flussab_aiger::binary;
+use nl_compiler::{AigError, FromId, from_aig, from_vast, to_aig, write_aig};
+#[cfg(feature = "serde")]
+use safety_net::serde::netlist_serialize;
+use safety_net::{Identifier, Instantiable, Logic, Net, Netlist, Parameter, format_id};
 use std::{
     collections::HashMap,
     io::{Read, stdin},
     path::{Path, PathBuf},
+    rc::Rc,
 };
-
-use clap::Parser;
-use nl_compiler::{AigError, FromId, from_vast, to_aig, write_aig};
-#[cfg(feature = "serde")]
-use safety_net::serde::netlist_serialize;
-use safety_net::{Identifier, Instantiable, Logic, Net, Netlist, Parameter, format_id};
 
 /// A primitive gate in a digital circuit, such as AND, OR, NOT, etc.
 #[derive(Debug, Clone)]
@@ -218,6 +219,9 @@ impl Gate {
 struct Args {
     /// Path to input file. If not provided, reads from stdin
     input: Option<PathBuf>,
+    /// Read the input as AID
+    #[arg(long = "aig", default_value_t = false)]
+    aig: bool,
     /// Dump ast
     #[arg(short = 'd', long, default_value_t = false)]
     dump_ast: bool,
@@ -246,6 +250,52 @@ fn sv_parse_wrapper(
     }
 }
 
+fn verilog_compilation(
+    buf: &[u8],
+    path: Option<PathBuf>,
+    dump_ast: bool,
+) -> std::io::Result<Rc<Netlist<Gate>>> {
+    let buf = std::str::from_utf8(buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let ast = sv_parse_wrapper(buf, path).map_err(std::io::Error::other)?;
+
+    if dump_ast {
+        eprintln!("{ast}");
+    }
+
+    let f = from_vast(&ast);
+
+    f.inspect_err(|e| eprintln!("{e}"))
+        .map_err(std::io::Error::other)
+}
+
+fn aig_compilation(buf: &[u8]) -> std::io::Result<Rc<Netlist<Gate>>> {
+    let rdr = binary::Parser::<u64>::from_read(buf, binary::Config::default())
+        .map_err(std::io::Error::other)?;
+
+    let aig = rdr.parse().map_err(std::io::Error::other)?;
+
+    let netlist = from_aig::<Gate>(
+        &aig.into(),
+        Gate {
+            name: "AND".into(),
+            inputs: vec!["A".into(), "B".into()],
+            outputs: vec!["Y".into()],
+            params: HashMap::new(),
+        },
+        Gate {
+            name: "INV".into(),
+            inputs: vec!["A".into()],
+            outputs: vec!["ZN".into()],
+            params: HashMap::new(),
+        },
+    );
+
+    netlist
+        .inspect_err(|e| eprintln!("{e}"))
+        .map_err(std::io::Error::other)
+}
+
 /// Rename nets and instances in the netlist with Lorem ipsum
 fn ipsum_nl(netlist: &Netlist<Gate>) -> std::io::Result<()> {
     let mut chain = lipsum::MarkovChain::new();
@@ -269,32 +319,23 @@ fn ipsum_nl(netlist: &Netlist<Gate>) -> std::io::Result<()> {
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-    let mut buf = String::new();
+    let mut buf = Vec::new();
 
     let path: Option<PathBuf> = match args.input {
         Some(p) => {
-            std::fs::File::open(&p)?.read_to_string(&mut buf)?;
+            std::fs::File::open(&p)?.read_to_end(&mut buf)?;
             Some(p)
         }
         None => {
-            stdin().read_to_string(&mut buf)?;
+            stdin().read_to_end(&mut buf)?;
             None
         }
     };
 
-    let ast = sv_parse_wrapper(&buf, path).map_err(std::io::Error::other)?;
-
-    if args.dump_ast {
-        println!("{ast}");
-        return Ok(());
-    }
-
-    let netlist = match from_vast::<Gate>(&ast) {
-        Ok(nl) => nl,
-        Err(e) => {
-            eprintln!("{e}");
-            return Err(std::io::Error::other(e));
-        }
+    let netlist = if args.aig {
+        aig_compilation(&buf)?
+    } else {
+        verilog_compilation(&buf, path, args.dump_ast)?
     };
 
     netlist.verify().map_err(std::io::Error::other)?;
@@ -323,11 +364,8 @@ fn main() -> std::io::Result<()> {
     }
 
     eprintln!("{netlist}");
-    let analysis = netlist
-        .get_analysis::<safety_net::graph::MultiDiGraph<_>>()
-        .unwrap();
-    let graph = analysis.get_graph();
-    let dot = petgraph::dot::Dot::with_config(graph, &[]);
+
+    let dot = netlist.dot_string().map_err(std::io::Error::other)?;
     println!("{dot}");
 
     Ok(())

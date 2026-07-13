@@ -93,6 +93,9 @@ pub enum AigError {
     /// An error originating from `flussab`.
     #[error("flussab error `{0}`")]
     FlussabError(#[from] flussab_aiger::aig::AigStructureError<crate::aig::U>),
+    /// An error originating from `flussab_aiger`.
+    #[error("flussab error `{0}`")]
+    AigParseError(#[from] flussab_aiger::ParseError),
     /// An error originating from `io`.
     #[error("IO error `{0}`")]
     IoError(#[from] std::io::Error),

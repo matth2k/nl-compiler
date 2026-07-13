@@ -16,6 +16,20 @@ use std::{collections::HashMap, io::Write, rc::Rc};
 /// The index type for the AIG
 pub type U = u64;
 
+/// Compile an AIG to a Safety Net netlist from bytes
+pub fn from_aig_bytes<I: Instantiable>(
+    buf: &[u8],
+    and: I,
+    inv: I,
+) -> Result<Rc<Netlist<I>>, AigError> {
+    use flussab_aiger::binary;
+    let rdr = binary::Parser::<u64>::from_read(buf, binary::Config::default())?;
+
+    let aig = rdr.parse()?;
+
+    from_aig::<I>(&aig.into(), and, inv)
+}
+
 /// Construct a Safety Net [Netlist] from a AIG
 /// Type parameter I defines the primitive library to parse into.
 pub fn from_aig<I: Instantiable>(aig: &Aig<U>, and: I, inv: I) -> Result<Rc<Netlist<I>>, AigError> {
@@ -69,6 +83,8 @@ pub fn from_aig<I: Instantiable>(aig: &Aig<U>, and: I, inv: I) -> Result<Rc<Netl
         let n = mapping[o].clone();
         netlist.expose_net(n)?;
     }
+
+    drop(mapping);
 
     netlist.clean()?;
 
