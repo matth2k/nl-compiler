@@ -13,7 +13,7 @@ mod cells;
 mod error;
 mod verilog;
 
-pub use aig::{U, from_aig, to_aig, write_aig};
+pub use aig::{U, from_aig, from_aig_bytes, to_aig, write_aig};
 pub use cells::FromId;
 pub use error::{AigError, VerilogError};
 pub use verilog::{from_vast, from_vast_overrides};
