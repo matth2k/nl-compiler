@@ -19,6 +19,11 @@ use sv_parser::{
     PortDeclaration, PortDeclarationInput, PortDeclarationOutput, PortDirection,
 };
 use sv_parser::{
+    AttrSpec, AttributeInstance, EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers,
+    MintypmaxExpression, ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier,
+    PortIdentifier, SimpleIdentifier, StringLiteral,
+};
+use sv_parser::{
     BinaryNumber, BinaryValue, ConstantExpression, DecimalNumber, DecimalNumberBaseUnsigned,
     Expression, HexNumber, HexValue, HierarchicalIdentifier, IntegralNumber, NonZeroUnsignedNumber,
     Number, Primary, PrimaryHierarchical, PrimaryLiteral, Select, Size, UnsignedNumber,
@@ -32,11 +37,6 @@ use sv_parser::{
     HierarchicalNetIdentifier, ImplicitDataType, IntegerVectorType, NetPortType,
     NetPortTypeDataType, NetType, PackedDimension, PsOrHierarchicalNetIdentifier,
     PsOrHierarchicalNetIdentifierPackageScope, TypeIdentifier,
-};
-use sv_parser::{
-    EscapedIdentifier, InstanceIdentifier, ListOfPortIdentifiers, MintypmaxExpression,
-    ModuleIdentifier, NetIdentifier, ParamExpression, ParameterIdentifier, PortIdentifier,
-    SimpleIdentifier,
 };
 use sv_parser::{
     HierarchicalInstance, ListOfParameterAssignments, ListOfParameterAssignmentsNamed,
@@ -258,6 +258,10 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
+    fn visit_string_literal(&self, s: &StringLiteral) -> Result<Parameter, VerilogError> {
+        todo!()
+    }
+
     fn visit_constant_expression(
         &self,
         expr: &ConstantExpression,
@@ -362,10 +366,11 @@ impl<'a> SemanticVisitor<'a> {
     fn visit_primary_literal(&self, literal: &PrimaryLiteral) -> Result<Parameter, VerilogError> {
         match literal {
             PrimaryLiteral::Number(x) => self.visit_number(x),
+            PrimaryLiteral::StringLiteral(s) => self.visit_string_literal(s),
             _ => VerilogError::new(
                 self.ast,
                 literal,
-                "Only number literals are supported".to_string(),
+                "Only number and string literals are supported".to_string(),
             ),
         }
     }
@@ -661,6 +666,30 @@ impl<'a> SemanticVisitor<'a> {
 
     fn visit_constant_select(&self, select: &ConstantSelect) -> Result<Option<u64>, VerilogError> {
         self.visit_constant_bit_select(&select.nodes.1)
+    }
+
+    fn visit_attr_spec(
+        &self,
+        spec: &AttrSpec,
+    ) -> Result<(Identifier, Option<Parameter>), VerilogError> {
+        let id = self.visit_identifier(&spec.nodes.0);
+        let param = match &spec.nodes.1 {
+            Some((_, e)) => Some(self.visit_constant_expression(e)?),
+            None => None,
+        };
+        Ok((id, param))
+    }
+
+    fn visit_attribute_instance(
+        &self,
+        attr: &AttributeInstance,
+    ) -> Result<Vec<(Identifier, Option<Parameter>)>, VerilogError> {
+        let mut vec = Vec::new();
+        let list = &attr.nodes.1;
+        for item in list.contents() {
+            vec.push(self.visit_attr_spec(item)?);
+        }
+        Ok(vec)
     }
 }
 
@@ -1159,7 +1188,16 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
         &mut self,
         item: &ModuleOrGenerateItemModule,
     ) -> Result<Vec<NetRef<I>>, VerilogError> {
-        self.visit_module_instantiation(&item.nodes.1)
+        let mut attributes = Vec::new();
+        for item in &item.nodes.0 {
+            attributes.extend(self.lookup.visit_attribute_instance(item)?);
+        }
+
+        let cells = self.visit_module_instantiation(&item.nodes.1)?;
+        for cell in &cells {
+            todo!()
+        }
+        Ok(cells)
     }
 
     fn visit_module_or_generate_item(
