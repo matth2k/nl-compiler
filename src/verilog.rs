@@ -259,7 +259,9 @@ impl<'a> SemanticVisitor<'a> {
     }
 
     fn visit_string_literal(&self, s: &StringLiteral) -> Parameter {
-        Parameter::String(self.visit_locate(&s.nodes.0))
+        let s = self.visit_locate(&s.nodes.0);
+        let trimmed = s.trim_matches(['"', '\'']).trim();
+        Parameter::String(trimmed.to_string())
     }
 
     fn visit_constant_expression(

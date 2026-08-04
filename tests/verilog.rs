@@ -458,6 +458,37 @@ fn reg() {
 }
 
 #[test]
+fn dont_touch_reg() {
+    let src = "module reg_test (
+                           clk,
+                           d,
+                           rst,
+                           y
+                       );
+                         input wire clk;
+                         input wire d;
+                         input wire rst;
+                         output wire y;
+                         
+                         (* dont_touch = \"true\" *)
+                         FDRE #(
+                             .INIT(1'b1)
+                         ) _0_ (
+                             .C(clk),
+                             .CE(1'b1),
+                             .D(d),
+                             .R(1'b0),
+                             .Q(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
+}
+
+#[test]
 fn reg_uninit() {
     let src = "module reg_test (
                            clk,
