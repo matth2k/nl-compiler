@@ -365,7 +365,7 @@ fn main() -> std::io::Result<()> {
 
     eprintln!("{netlist}");
 
-    let dot = netlist.dot_string().map_err(std::io::Error::other)?;
+    let dot = netlist.dot_string();
     println!("{dot}");
 
     Ok(())
