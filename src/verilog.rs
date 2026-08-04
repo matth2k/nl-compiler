@@ -258,8 +258,8 @@ impl<'a> SemanticVisitor<'a> {
         }
     }
 
-    fn visit_string_literal(&self, s: &StringLiteral) -> Result<Parameter, VerilogError> {
-        todo!()
+    fn visit_string_literal(&self, s: &StringLiteral) -> Parameter {
+        Parameter::String(self.visit_locate(&s.nodes.0))
     }
 
     fn visit_constant_expression(
@@ -366,7 +366,7 @@ impl<'a> SemanticVisitor<'a> {
     fn visit_primary_literal(&self, literal: &PrimaryLiteral) -> Result<Parameter, VerilogError> {
         match literal {
             PrimaryLiteral::Number(x) => self.visit_number(x),
-            PrimaryLiteral::StringLiteral(s) => self.visit_string_literal(s),
+            PrimaryLiteral::StringLiteral(s) => Ok(self.visit_string_literal(s)),
             _ => VerilogError::new(
                 self.ast,
                 literal,
@@ -742,7 +742,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
 
     fn visit_module_identifier(&self, id: &ModuleIdentifier) {
         let id = self.lookup.visit_module_identifier(id);
-        self.netlist.set_name(id.to_string())
+        self.netlist.set_name(id)
     }
 
     fn visit_module_declaration(&mut self, decl: &ModuleDeclaration) -> Result<(), VerilogError> {
@@ -1195,7 +1195,14 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
 
         let cells = self.visit_module_instantiation(&item.nodes.1)?;
         for cell in &cells {
-            todo!()
+            for (k, v) in &attributes {
+                match v {
+                    Some(param) => {
+                        cell.insert_attribute(k.to_string(), param.clone());
+                    }
+                    None => cell.set_attribute(k.to_string()),
+                }
+            }
         }
         Ok(cells)
     }
@@ -1698,7 +1705,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     ast: &sv_parser::SyntaxTree,
     overrides: F,
 ) -> Result<Rc<Netlist<I>>, VerilogError> {
-    let netlist = Netlist::<I>::new("top".to_string());
+    let netlist = Netlist::<I>::new("top".into());
     let item_visitor = ItemVisitor::new(ast, &netlist, overrides);
     let (outputs, instances, drivers) = item_visitor.visit()?;
 

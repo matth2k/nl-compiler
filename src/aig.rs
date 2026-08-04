@@ -45,7 +45,7 @@ pub fn from_aig<I: Instantiable>(aig: &Aig<U>, and: I, inv: I) -> Result<Rc<Netl
         ));
     }
 
-    let netlist = Netlist::<I>::new("top".to_string());
+    let netlist = Netlist::<I>::new("top".into());
 
     let inputs: Vec<(U, Identifier)> = aig
         .inputs
