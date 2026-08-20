@@ -77,11 +77,11 @@ impl Instantiable for Gate {
         &self.name
     }
 
-    fn get_input_ports(&self) -> impl IntoIterator<Item = &Net> {
+    fn get_input_ports(&self) -> &[Net] {
         &self.inputs
     }
 
-    fn get_output_ports(&self) -> impl IntoIterator<Item = &Net> {
+    fn get_output_ports(&self) -> &[Net] {
         &self.outputs
     }
 

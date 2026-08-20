@@ -26,11 +26,11 @@ impl Instantiable for Gate {
         &self.name
     }
 
-    fn get_input_ports(&self) -> impl IntoIterator<Item = &Net> {
+    fn get_input_ports(&self) -> &[Net] {
         &self.inputs
     }
 
-    fn get_output_ports(&self) -> impl IntoIterator<Item = &Net> {
+    fn get_output_ports(&self) -> &[Net] {
         &self.outputs
     }
 
@@ -46,8 +46,8 @@ impl Instantiable for Gate {
         self.params.insert(id.clone(), val)
     }
 
-    fn parameters(&self) -> impl Iterator<Item = (Identifier, Parameter)> {
-        self.params.clone().into_iter()
+    fn parameters(&self) -> Vec<(Identifier, Parameter)> {
+        self.params.clone().into_iter().collect()
     }
 
     fn from_constant(val: Logic) -> Option<Self> {
@@ -137,7 +137,7 @@ fn main() -> std::io::Result<()> {
 
     netlist.verify().map_err(std::io::Error::other)?;
 
-    let netlist = netlist.reclaim().unwrap();
+    let netlist = netlist.try_unlink().unwrap();
 
     #[cfg(feature = "serde")]
     if args.serialize {
