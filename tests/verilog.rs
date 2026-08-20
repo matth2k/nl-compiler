@@ -576,7 +576,7 @@ fn two_outputs() {
         .map(|(_, n)| n.to_string())
         .collect::<Vec<_>>();
     let gates = netlist
-        .matches(|g| g.get_output_ports().into_iter().count() > 1)
+        .matches(|g| g.get_output_ports().iter().count() > 1)
         .collect::<Vec<_>>();
 
     assert!(inputs.contains(&"a".to_string()));
