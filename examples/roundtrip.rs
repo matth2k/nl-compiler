@@ -346,7 +346,7 @@ fn main() -> std::io::Result<()> {
 
     #[cfg(feature = "serde")]
     if args.serialize {
-        let netlist = netlist.reclaim().unwrap();
+        let netlist = netlist.try_unlink().unwrap();
         netlist_serialize(netlist, std::io::stdout()).map_err(std::io::Error::other)?;
         return Ok(());
     }
