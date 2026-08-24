@@ -35,7 +35,9 @@ impl VerilogError {
             _ => None,
         };
         let origin = match locate {
-            Some(l) => ast.get_origin(&l).map(|(p, _)| (p.clone(), l.line as usize, l.offset)),
+            Some(l) => ast
+                .get_origin(&l)
+                .map(|(p, _)| (p.clone(), l.line as usize, l.offset)),
             None => None,
         };
         Err(Self {
