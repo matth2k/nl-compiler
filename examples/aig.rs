@@ -46,6 +46,10 @@ impl Instantiable for Gate {
         self.params.insert(id.clone(), val)
     }
 
+    fn clear_parameter(&mut self, id: &Identifier) -> Option<Parameter> {
+        self.params.remove(id)
+    }
+
     fn parameters(&self) -> Vec<(Identifier, Parameter)> {
         self.params.clone().into_iter().collect()
     }
