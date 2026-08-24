@@ -12,7 +12,8 @@ use thiserror::Error;
 /// Errors for Verilog Compilation.
 #[derive(Error, Debug)]
 pub struct VerilogError {
-    origin: Option<(PathBuf, usize)>,
+    /// Path, line, offset
+    origin: Option<(PathBuf, usize, usize)>,
     message: String,
     content: String,
 }
@@ -34,10 +35,11 @@ impl VerilogError {
             _ => None,
         };
         let origin = match locate {
-            Some(l) => ast.get_origin(&l),
+            Some(l) => ast
+                .get_origin(&l)
+                .map(|(p, _)| (p.clone(), l.line as usize, l.offset)),
             None => None,
         };
-        let origin = origin.map(|(p, l)| (p.clone(), l));
         Err(Self {
             origin,
             message,
@@ -58,8 +60,8 @@ impl Default for VerilogError {
 
 impl Display for VerilogError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some((path, line)) = &self.origin {
-            write!(f, "{}:{}: ", path.display(), line)?;
+        if let Some((path, line, offset)) = &self.origin {
+            write!(f, "{}:{}:{} ", path.display(), line, offset)?;
         }
         writeln!(f, "{}", self.message)?;
         if !self.content.is_empty() {

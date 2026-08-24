@@ -924,7 +924,12 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
                 return VerilogError::new(
                     self.ast,
                     conn,
-                    format!("Port {} not found in instance", port),
+                    format!(
+                        "Port {} not found within any instance port Ins {:?} Outs {:?}",
+                        port,
+                        inst.get_input_ports(),
+                        inst.get_output_ports(),
+                    ),
                 );
             }
             _ => unreachable!(),
@@ -1591,7 +1596,12 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
                 return VerilogError::new(
                     self.ast,
                     conn,
-                    format!("Port {} not found in instance", port),
+                    format!(
+                        "Port {} not found within any instance port Ins {:?} Outs {:?}",
+                        port,
+                        inst.get_input_ports(),
+                        inst.get_output_ports(),
+                    ),
                 );
             }
             _ => unreachable!(),
