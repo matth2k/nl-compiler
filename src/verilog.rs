@@ -921,14 +921,18 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
             (Some(input), None) => (input, false),
             (None, Some(output)) => (output, true),
             (None, None) => {
+                let ports = inst
+                    .get_input_ports()
+                    .iter()
+                    .chain(inst.get_output_ports().iter())
+                    .map(|p| p.get_identifier().to_string())
+                    .collect::<Vec<_>>();
                 return VerilogError::new(
                     self.ast,
                     conn,
                     format!(
-                        "Port {} not found within any instance port Ins {:?} Outs {:?}",
-                        port,
-                        inst.get_input_ports(),
-                        inst.get_output_ports(),
+                        "Port {} not found within any instance port {:?}",
+                        port, ports,
                     ),
                 );
             }
@@ -1593,14 +1597,18 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
             (Some(input), None) => (input, false),
             (None, Some(output)) => (output, true),
             (None, None) => {
+                let ports = inst
+                    .get_input_ports()
+                    .iter()
+                    .chain(inst.get_output_ports().iter())
+                    .map(|p| p.get_identifier().to_string())
+                    .collect::<Vec<_>>();
                 return VerilogError::new(
                     self.ast,
                     conn,
                     format!(
-                        "Port {} not found within any instance port Ins {:?} Outs {:?}",
-                        port,
-                        inst.get_input_ports(),
-                        inst.get_output_ports(),
+                        "Port {} not found within any instance port {:?}",
+                        port, ports,
                     ),
                 );
             }
