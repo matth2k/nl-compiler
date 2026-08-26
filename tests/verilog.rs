@@ -669,3 +669,54 @@ fn test_undriven_output() {
 
     assert_verilog_eq!(dst, roundtrip(&src).unwrap());
 }
+
+#[test]
+fn multiple_modules() {
+    let src = "module and_test_one (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+
+                       module and_test_two (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let incl: Vec<std::path::PathBuf> = vec![];
+    let path = Path::new("top.v").to_path_buf();
+    let (ast, _) =
+        sv_parser::parse_sv_str(&src, path, &HashMap::new(), &incl, true, false).unwrap();
+    let nl = from_vast::<Gate>(&ast);
+    assert!(nl.is_ok());
+    let nl = nl.unwrap();
+
+    assert_eq!(nl.len(), 2);
+
+    assert_verilog_eq!(src, nl[0].to_string() + "\n" + &nl[1].to_string());
+}
