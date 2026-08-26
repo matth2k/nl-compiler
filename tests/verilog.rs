@@ -200,7 +200,7 @@ impl FromId for Gate {
     }
 }
 
-fn compile(src: &str) -> Result<Rc<Netlist<Gate>>, VerilogError> {
+fn compile(src: &str) -> Result<Vec<Rc<Netlist<Gate>>>, VerilogError> {
     let incl: Vec<std::path::PathBuf> = vec![];
     let path = Path::new("top.v").to_path_buf();
     let (ast, _) = sv_parser::parse_sv_str(src, path, &HashMap::new(), &incl, true, false).unwrap();
@@ -209,7 +209,12 @@ fn compile(src: &str) -> Result<Rc<Netlist<Gate>>, VerilogError> {
 
 fn roundtrip(src: &str) -> Result<String, VerilogError> {
     let netlist = compile(src)?;
-    Ok(netlist.to_string())
+    let mut result = String::new();
+    for nl in netlist {
+        result.push_str(&nl.to_string());
+        result.push('\n');
+    }
+    Ok(result)
 }
 
 #[test]
@@ -570,6 +575,8 @@ fn two_outputs() {
     .to_string();
 
     let netlist = compile(&src).unwrap();
+    assert!(netlist.len() == 1);
+    let netlist = &netlist[0];
     let inputs = netlist
         .inputs()
         .map(|n| n.as_net().to_string())
@@ -617,6 +624,8 @@ fn same_line_decl() {
     .to_string();
 
     let netlist = compile(&src).unwrap();
+    assert!(netlist.len() == 1);
+    let netlist = &netlist[0];
     let inputs = netlist
         .inputs()
         .map(|n| n.as_net().to_string())
@@ -661,4 +670,45 @@ fn test_undriven_output() {
     .to_string();
 
     assert_verilog_eq!(dst, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn multiple_modules() {
+    let src = "module and_test_one (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+
+                       module and_test_two (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
 }

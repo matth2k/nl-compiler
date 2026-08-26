@@ -702,20 +702,34 @@ type Items<I> = (
 );
 
 /// The visitor that iterates over basic items to create
-struct ItemVisitor<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> {
+struct ItemVisitor<'a, 'b, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>>
+where
+    'a: 'b,
+{
     ast: &'a SyntaxTree,
+    decl: &'b ModuleDeclaration,
     netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     outputs: HashSet<Identifier>,
     instances: HashMap<Identifier, NetRef<I>>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
-    overrides: F,
+    overrides: &'a F,
 }
 
-impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisitor<'a, I, F> {
-    fn new(ast: &'a SyntaxTree, netlist: &'a Rc<Netlist<I>>, overrides: F) -> Self {
+impl<'a, 'b, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>>
+    ItemVisitor<'a, 'b, I, F>
+where
+    'a: 'b,
+{
+    fn new(
+        ast: &'a SyntaxTree,
+        decl: &'b ModuleDeclaration,
+        netlist: &'a Rc<Netlist<I>>,
+        overrides: &'a F,
+    ) -> Self {
         Self {
             ast,
+            decl,
             netlist,
             lookup: SemanticVisitor::new(ast),
             outputs: HashSet::new(),
@@ -726,18 +740,7 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
     }
 
     fn visit(mut self) -> Result<Items<I>, VerilogError> {
-        let Some(root) = self.ast.into_iter().next() else {
-            return Err(VerilogError::default());
-        };
-
-        let decl = unwrap_node!(root, ModuleDeclaration);
-
-        match decl {
-            Some(RefNode::ModuleDeclaration(x)) => self.visit_module_declaration(x)?,
-            _ => {
-                return Err(VerilogError::default());
-            }
-        }
+        self.visit_module_declaration(self.decl)?;
 
         Ok((self.outputs, self.instances, self.drivers))
     }
@@ -1353,8 +1356,12 @@ impl<'a, I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>> ItemVisi
 type Wires<I> = (HashSet<Identifier>, bool, HashMap<Identifier, DrivenNet<I>>);
 
 /// The visitor that iterates over basic items to create
-struct WireVisitor<'a, I: Instantiable> {
+struct WireVisitor<'a, 'b, I: Instantiable>
+where
+    'a: 'b,
+{
     ast: &'a SyntaxTree,
+    decl: &'b ModuleDeclaration,
     netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     outputs: HashSet<Identifier>,
@@ -1362,15 +1369,20 @@ struct WireVisitor<'a, I: Instantiable> {
     changed: bool,
 }
 
-impl<'a, I: Instantiable> WireVisitor<'a, I> {
+impl<'a, 'b, I: Instantiable> WireVisitor<'a, 'b, I>
+where
+    'a: 'b,
+{
     fn new(
         ast: &'a SyntaxTree,
+        decl: &'b ModuleDeclaration,
         netlist: &'a Rc<Netlist<I>>,
         outputs: HashSet<Identifier>,
         drivers: HashMap<Identifier, DrivenNet<I>>,
     ) -> Self {
         Self {
             ast,
+            decl,
             netlist,
             lookup: SemanticVisitor::new(ast),
             outputs,
@@ -1380,7 +1392,7 @@ impl<'a, I: Instantiable> WireVisitor<'a, I> {
     }
 
     fn visit(mut self) -> Result<Wires<I>, VerilogError> {
-        for n in self.ast {
+        for n in self.decl {
             if let RefNode::ContinuousAssign(assign) = n {
                 self.changed |= self.visit_continuous_assign(assign)?;
             }
@@ -1535,23 +1547,32 @@ fn set_default_drivers<I: Instantiable>(
 }
 
 /// The visitor that connects all the drivers at their uses
-struct InputVisitor<'a, I: Instantiable> {
+struct InputVisitor<'a, 'b, I: Instantiable>
+where
+    'a: 'b,
+{
     ast: &'a SyntaxTree,
+    decl: &'b ModuleDeclaration,
     netlist: &'a Rc<Netlist<I>>,
     lookup: SemanticVisitor<'a>,
     instances: HashMap<Identifier, NetRef<I>>,
     drivers: HashMap<Identifier, DrivenNet<I>>,
 }
 
-impl<'a, I: Instantiable> InputVisitor<'a, I> {
+impl<'a, 'b, I: Instantiable> InputVisitor<'a, 'b, I>
+where
+    'a: 'b,
+{
     fn new(
         ast: &'a SyntaxTree,
+        decl: &'b ModuleDeclaration,
         netlist: &'a Rc<Netlist<I>>,
         instances: HashMap<Identifier, NetRef<I>>,
         drivers: HashMap<Identifier, DrivenNet<I>>,
     ) -> Self {
         Self {
             ast,
+            decl,
             netlist,
             lookup: SemanticVisitor::new(ast),
             instances,
@@ -1560,7 +1581,7 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
     }
 
     fn visit(self) -> Result<(), VerilogError> {
-        for n in self.ast {
+        for n in self.decl {
             if let RefNode::HierarchicalInstance(inst) = n {
                 self.visit_hierarchical_instance(inst)?
             }
@@ -1718,35 +1739,41 @@ impl<'a, I: Instantiable> InputVisitor<'a, I> {
     }
 }
 
-/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Construct Safety Net [Netlist]s from a Verilog AST.
 /// Type parameter I defines the primitive library to parse into.
 /// You can provide a closure `overrides` to modify each instantiated cell after creation.
 pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>>(
     ast: &sv_parser::SyntaxTree,
     overrides: F,
-) -> Result<Rc<Netlist<I>>, VerilogError> {
-    let netlist = Netlist::<I>::new("top".into());
-    let item_visitor = ItemVisitor::new(ast, &netlist, overrides);
-    let (outputs, instances, drivers) = item_visitor.visit()?;
+) -> Result<Vec<Rc<Netlist<I>>>, VerilogError> {
+    let mut result = Vec::new();
+    for n in ast {
+        if let RefNode::ModuleDeclaration(decl) = n {
+            let netlist = Netlist::<I>::new("top".into());
+            let item_visitor = ItemVisitor::new(ast, decl, &netlist, &overrides);
+            let (outputs, instances, drivers) = item_visitor.visit()?;
 
-    let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
-    while changing {
-        let wire_visitor = WireVisitor::new(ast, &netlist, outputs, drivers);
-        (outputs, changing, drivers) = wire_visitor.visit()?;
+            let (mut outputs, mut changing, mut drivers) = (outputs, true, drivers);
+            while changing {
+                let wire_visitor = WireVisitor::new(ast, decl, &netlist, outputs, drivers);
+                (outputs, changing, drivers) = wire_visitor.visit()?;
+            }
+
+            set_default_drivers(&outputs, &mut drivers, &netlist)?;
+
+            let input_visitor = InputVisitor::new(ast, decl, &netlist, instances, drivers);
+            input_visitor.visit()?;
+            result.push(netlist);
+        }
     }
 
-    set_default_drivers(&outputs, &mut drivers, &netlist)?;
-
-    let input_visitor = InputVisitor::new(ast, &netlist, instances, drivers);
-    input_visitor.visit()?;
-
-    Ok(netlist)
+    Ok(result)
 }
 
-/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Construct Safety Net [Netlist]s from a Verilog AST.
 /// Type parameter I defines the primitive library to parse into.
 pub fn from_vast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
-) -> Result<Rc<Netlist<I>>, VerilogError> {
+) -> Result<Vec<Rc<Netlist<I>>>, VerilogError> {
     from_vast_overrides::<I, _>(ast, |_, _| None)
 }
