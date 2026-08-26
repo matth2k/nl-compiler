@@ -1739,7 +1739,7 @@ where
     }
 }
 
-/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Construct Safety Net [Netlist]s from a Verilog AST.
 /// Type parameter I defines the primitive library to parse into.
 /// You can provide a closure `overrides` to modify each instantiated cell after creation.
 pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> Option<I>>(
@@ -1770,7 +1770,7 @@ pub fn from_vast_overrides<I: Instantiable + FromId, F: Fn(&Identifier, &I) -> O
     Ok(result)
 }
 
-/// Construct a Safety Net [Netlist] from a Verilog netlist AST.
+/// Construct Safety Net [Netlist]s from a Verilog AST.
 /// Type parameter I defines the primitive library to parse into.
 pub fn from_vast<I: Instantiable + FromId>(
     ast: &sv_parser::SyntaxTree,
