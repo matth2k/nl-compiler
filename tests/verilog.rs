@@ -200,23 +200,21 @@ impl FromId for Gate {
     }
 }
 
-fn compile(src: &str) -> Result<Rc<Netlist<Gate>>, VerilogError> {
+fn compile(src: &str) -> Result<Vec<Rc<Netlist<Gate>>>, VerilogError> {
     let incl: Vec<std::path::PathBuf> = vec![];
     let path = Path::new("top.v").to_path_buf();
     let (ast, _) = sv_parser::parse_sv_str(src, path, &HashMap::new(), &incl, true, false).unwrap();
-    let nl = from_vast(&ast)?;
-    if nl.len() != 1 {
-        panic!(
-            "Expected exactly one module in the Verilog source, found {}",
-            nl.len()
-        );
-    }
-    Ok(nl.into_iter().next().unwrap())
+    from_vast(&ast)
 }
 
 fn roundtrip(src: &str) -> Result<String, VerilogError> {
     let netlist = compile(src)?;
-    Ok(netlist.to_string())
+    let mut result = String::new();
+    for nl in netlist {
+        result.push_str(&nl.to_string());
+        result.push('\n');
+    }
+    Ok(result)
 }
 
 #[test]
@@ -577,6 +575,8 @@ fn two_outputs() {
     .to_string();
 
     let netlist = compile(&src).unwrap();
+    assert!(netlist.len() == 1);
+    let netlist = &netlist[0];
     let inputs = netlist
         .inputs()
         .map(|n| n.as_net().to_string())
@@ -624,6 +624,8 @@ fn same_line_decl() {
     .to_string();
 
     let netlist = compile(&src).unwrap();
+    assert!(netlist.len() == 1);
+    let netlist = &netlist[0];
     let inputs = netlist
         .inputs()
         .map(|n| n.as_net().to_string())
@@ -708,15 +710,5 @@ fn multiple_modules() {
                        "
     .to_string();
 
-    let incl: Vec<std::path::PathBuf> = vec![];
-    let path = Path::new("top.v").to_path_buf();
-    let (ast, _) =
-        sv_parser::parse_sv_str(&src, path, &HashMap::new(), &incl, true, false).unwrap();
-    let nl = from_vast::<Gate>(&ast);
-    assert!(nl.is_ok());
-    let nl = nl.unwrap();
-
-    assert_eq!(nl.len(), 2);
-
-    assert_verilog_eq!(src, nl[0].to_string() + "\n" + &nl[1].to_string());
+    assert_verilog_eq!(src, roundtrip(&src).unwrap());
 }

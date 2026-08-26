@@ -271,13 +271,10 @@ fn verilog_compilation(
 
     match f {
         Ok(nl) if nl.len() == 1 => Ok(nl.into_iter().next().unwrap()),
-        Ok(nl) => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "Expected exactly one module in the Verilog source, found {}",
-                nl.len()
-            ),
-        )),
+        Ok(nl) => Err(std::io::Error::other(format!(
+            "Expected exactly one module in the Verilog source, found {}",
+            nl.len()
+        ))),
         Err(e) => {
             eprintln!("{e}");
             Err(std::io::Error::other(e))
