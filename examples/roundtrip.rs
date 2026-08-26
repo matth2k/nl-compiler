@@ -269,8 +269,20 @@ fn verilog_compilation(
 
     let f = from_vast(&ast);
 
-    f.inspect_err(|e| eprintln!("{e}"))
-        .map_err(std::io::Error::other)
+    match f {
+        Ok(nl) if nl.len() == 1 => Ok(nl.into_iter().next().unwrap()),
+        Ok(nl) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Expected exactly one module in the Verilog source, found {}",
+                nl.len()
+            ),
+        )),
+        Err(e) => {
+            eprintln!("{e}");
+            Err(std::io::Error::other(e))
+        }
+    }
 }
 
 fn aig_compilation(buf: &[u8]) -> std::io::Result<Rc<Netlist<Gate>>> {

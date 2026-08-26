@@ -204,7 +204,14 @@ fn compile(src: &str) -> Result<Rc<Netlist<Gate>>, VerilogError> {
     let incl: Vec<std::path::PathBuf> = vec![];
     let path = Path::new("top.v").to_path_buf();
     let (ast, _) = sv_parser::parse_sv_str(src, path, &HashMap::new(), &incl, true, false).unwrap();
-    from_vast(&ast)
+    let nl = from_vast(&ast)?;
+    if nl.len() != 1 {
+        panic!(
+            "Expected exactly one module in the Verilog source, found {}",
+            nl.len()
+        );
+    }
+    Ok(nl.into_iter().next().unwrap())
 }
 
 fn roundtrip(src: &str) -> Result<String, VerilogError> {
