@@ -1614,6 +1614,10 @@ where
             );
         }
         let lhs = self.lookup.visit_net_identifier(&assign.nodes.0);
+        if self.drivers.contains_key(&lhs) {
+            return Ok(false);
+        }
+
         if let Some((sym, rhs)) = &assign.nodes.2
             && self.lookup.visit_symbol(sym) == "="
             && let IdentifierOrLogic::Identifier(rhs) = self.lookup.visit_expression(rhs)?
