@@ -712,3 +712,88 @@ fn multiple_modules() {
 
     assert_verilog_eq!(src, roundtrip(&src).unwrap());
 }
+
+#[test]
+fn assign_decls() {
+    let src = "module and_test (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                         wire c = b;
+                         wire d = c;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(d),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let dst = "module and_test (
+                           a,
+                           b,
+                           y
+                       );
+                         input wire a;
+                         input wire b;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
+}
+
+#[test]
+fn assign_decl_const() {
+    let src = "module and_test (
+                           a,
+                           y
+                       );
+                         input wire a;
+                         wire b = 1'b0;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(b),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    let dst = "module and_test (
+                           a,
+                           y
+                       );
+                         input wire a;
+                         output wire y;
+                       
+                         AND _0_ (
+                             .A(a),
+                             .B(1'b0),
+                             .Y(y)
+                         );
+                       
+                       endmodule
+                       "
+    .to_string();
+
+    assert_verilog_eq!(dst, roundtrip(&src).unwrap());
+}
