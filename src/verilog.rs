@@ -1151,7 +1151,7 @@ where
                 return VerilogError::new(
                     self.ast,
                     decl,
-                    "Instiable type does not support constant".to_string(),
+                    "Instantiable type does not support constant".to_string(),
                 );
             };
             let inst_name = lhs.clone() + "const".into();
@@ -1541,7 +1541,7 @@ where
                     return VerilogError::new(
                         self.ast,
                         assign,
-                        "Instiable type does not support constant".to_string(),
+                        "Instantiable type does not support constant".to_string(),
                     );
                 };
                 let inst_name = lhs.clone() + "const".into();
@@ -1831,7 +1831,7 @@ where
                                 return VerilogError::new(
                                     self.ast,
                                     inst,
-                                    "Instiable type does not support constant".to_string(),
+                                    "Instantiable type does not support constant".to_string(),
                                 );
                             };
                             let inst_name = name.clone()
