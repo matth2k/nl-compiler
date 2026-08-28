@@ -1645,9 +1645,9 @@ fn set_default_drivers<I: Instantiable>(
             let inst =
                 I::from_constant(Logic::Z).unwrap_or(I::from_constant(Logic::False).unwrap());
             let id = output.clone() + "default_logic".into();
-            let net = netlist.insert_gate(inst, id, &[]).unwrap().get_output(0);
-            netlist.expose_net_with_name(net.clone(), output.clone());
-            drivers.insert(output.clone(), net);
+            let net = netlist.insert_gate_disconnected(inst, id);
+            netlist.expose_net_with_name(net.clone().into(), output.clone());
+            drivers.insert(output.clone(), net.into());
         }
     }
     Ok(())
