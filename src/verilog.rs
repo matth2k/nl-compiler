@@ -30,7 +30,7 @@ use sv_parser::{
 };
 use sv_parser::{
     ConstantBitSelect, ConstantSelect, ContinuousAssign, ContinuousAssignNet, ListOfNetAssignments,
-    NetAssignment, NetLvalue, NetLvalueIdentifier,
+    NetAssignment, NetDeclAssignment, NetLvalue, NetLvalueIdentifier,
 };
 use sv_parser::{
     ConstantRange, DataType, DataTypeOrImplicit, DataTypeType, DataTypeVector,
@@ -39,14 +39,14 @@ use sv_parser::{
     PsOrHierarchicalNetIdentifierPackageScope, TypeIdentifier,
 };
 use sv_parser::{
-    HierarchicalInstance, ListOfParameterAssignments, ListOfParameterAssignmentsNamed,
-    ListOfPortConnections, ListOfPortConnectionsNamed, ModuleCommonItem, ModuleInstantiation,
-    ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration, ModuleOrGenerateItemModule,
-    ModuleOrGenerateItemModuleItem, NamedParameterAssignment, NamedPortConnection,
-    NamedPortConnectionIdentifier, NetDeclaration, PackageOrGenerateItemDeclaration,
-    ParameterValueAssignment,
+    HierarchicalInstance, ListOfNetDeclAssignments, ListOfParameterAssignments,
+    ListOfParameterAssignmentsNamed, ListOfPortConnections, ListOfPortConnectionsNamed,
+    ModuleCommonItem, ModuleInstantiation, ModuleOrGenerateItem, ModuleOrGenerateItemDeclaration,
+    ModuleOrGenerateItemModule, ModuleOrGenerateItemModuleItem, NamedParameterAssignment,
+    NamedPortConnection, NamedPortConnectionIdentifier, NetDeclaration, NetDeclarationNetType,
+    PackageOrGenerateItemDeclaration, ParameterValueAssignment,
 };
-use sv_parser::{Locate, RefNode, SyntaxTree, unwrap_node};
+use sv_parser::{Locate, RefNode, Symbol, SyntaxTree, unwrap_node};
 
 enum IdentifierOrLogic {
     Identifier(Identifier),
@@ -71,6 +71,10 @@ impl<'a> SemanticVisitor<'a> {
 
     fn visit_locate(&self, loc: &Locate) -> String {
         self.ast.get_str(loc).map(|s| s.to_string()).unwrap()
+    }
+
+    fn visit_symbol(&self, sym: &Symbol) -> String {
+        self.visit_locate(&sym.nodes.0)
     }
 
     fn visit_simple_identifier(&self, id: &SimpleIdentifier) -> Identifier {
@@ -1127,39 +1131,109 @@ where
         Ok(vec)
     }
 
+    fn visit_net_decl_assignment(
+        &mut self,
+        decl: &NetDeclAssignment,
+    ) -> Result<Option<DrivenNet<I>>, VerilogError> {
+        if !decl.nodes.1.is_empty() {
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only single-bit net declarations are supported".to_string(),
+            );
+        }
+        let lhs = self.lookup.visit_net_identifier(&decl.nodes.0);
+        if let Some((sym, rhs)) = &decl.nodes.2
+            && self.lookup.visit_symbol(sym) == "="
+            && let IdentifierOrLogic::Logic(l) = self.lookup.visit_expression(rhs)?
+        {
+            let Some(inst) = I::from_constant(l) else {
+                return VerilogError::new(
+                    self.ast,
+                    decl,
+                    "Instantiable type does not support constant".to_string(),
+                );
+            };
+            let inst_name = lhs.clone() + "const".into();
+
+            let dnet = self
+                .netlist
+                .insert_gate_disconnected(inst, inst_name)
+                .get_output(0);
+            dnet.as_net_mut().set_identifier(lhs.clone());
+            self.drivers.insert(lhs, dnet.clone());
+            Ok(Some(dnet))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn visit_list_of_net_decl_assignments(
+        &mut self,
+        list: &ListOfNetDeclAssignments,
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
+        let mut res = Vec::new();
+        for item in list.nodes.0.contents() {
+            if let Some(net) = self.visit_net_decl_assignment(item)? {
+                res.push(net);
+            }
+        }
+        Ok(res)
+    }
+
+    fn visit_net_declaration_net_type(
+        &mut self,
+        decl: &NetDeclarationNetType,
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
+        if !matches!(decl.nodes.0, NetType::Wire(_)) {
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only wire net types are supported".to_string(),
+            );
+        }
+        if self.lookup.visit_data_type_or_implicit(&decl.nodes.3)? != 1 {
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only single-bit internal net types are supported".to_string(),
+            );
+        }
+        self.visit_list_of_net_decl_assignments(&decl.nodes.5)
+    }
+
+    fn visit_net_declaration(
+        &mut self,
+        decl: &NetDeclaration,
+    ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
+        if let NetDeclaration::NetType(decl) = decl {
+            self.visit_net_declaration_net_type(decl.as_ref())
+        } else {
+            VerilogError::new(
+                self.ast,
+                decl,
+                "Only wire net types are supported".to_string(),
+            )
+        }
+    }
+
     fn visit_package_or_generate_item_declaration(
-        &self,
+        &mut self,
         item: &PackageOrGenerateItemDeclaration,
     ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
-        match item {
-            PackageOrGenerateItemDeclaration::NetDeclaration(decl) => match decl.as_ref() {
-                NetDeclaration::NetType(ntype) => {
-                    if !matches!(ntype.nodes.0, NetType::Wire(_)) {
-                        VerilogError::new(
-                            self.ast,
-                            item,
-                            "Only wire net types are supported".to_string(),
-                        )
-                    } else {
-                        Ok(vec![])
-                    }
-                }
-                _ => VerilogError::new(
-                    self.ast,
-                    item,
-                    "Only wire net types are supported".to_string(),
-                ),
-            },
-            _ => VerilogError::new(
+        if let PackageOrGenerateItemDeclaration::NetDeclaration(decl) = item {
+            self.visit_net_declaration(decl.as_ref())
+        } else {
+            VerilogError::new(
                 self.ast,
                 item,
                 "Only wire net types are supported".to_string(),
-            ),
+            )
         }
     }
 
     fn visit_module_or_generate_item_declaration(
-        &self,
+        &mut self,
         item: &ModuleOrGenerateItemDeclaration,
     ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
@@ -1171,7 +1245,7 @@ where
     }
 
     fn visit_module_common_item(
-        &self,
+        &mut self,
         item: &ModuleCommonItem,
     ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         match item {
@@ -1192,7 +1266,7 @@ where
     }
 
     fn visit_module_or_generate_item_module_item(
-        &self,
+        &mut self,
         item: &ModuleOrGenerateItemModuleItem,
     ) -> Result<Vec<DrivenNet<I>>, VerilogError> {
         self.visit_module_common_item(&item.nodes.1)
@@ -1395,6 +1469,8 @@ where
         for n in self.decl {
             if let RefNode::ContinuousAssign(assign) = n {
                 self.changed |= self.visit_continuous_assign(assign)?;
+            } else if let RefNode::NetDeclAssignment(assign) = n {
+                self.changed |= self.visit_net_decl_assignment(assign)?;
             }
         }
 
@@ -1465,7 +1541,7 @@ where
                     return VerilogError::new(
                         self.ast,
                         assign,
-                        "Instiable type does not support constant".to_string(),
+                        "Instantiable type does not support constant".to_string(),
                     );
                 };
                 let inst_name = lhs.clone() + "const".into();
@@ -1525,6 +1601,37 @@ where
             ),
         }
     }
+
+    fn visit_net_decl_assignment(
+        &mut self,
+        assign: &NetDeclAssignment,
+    ) -> Result<bool, VerilogError> {
+        if !assign.nodes.1.is_empty() {
+            return VerilogError::new(
+                self.ast,
+                assign,
+                "Only simple net declarations are supported for internal nodes".to_string(),
+            );
+        }
+        let lhs = self.lookup.visit_net_identifier(&assign.nodes.0);
+        if self.drivers.contains_key(&lhs) {
+            return Ok(false);
+        }
+
+        if let Some((sym, rhs)) = &assign.nodes.2
+            && self.lookup.visit_symbol(sym) == "="
+            && let IdentifierOrLogic::Identifier(rhs) = self.lookup.visit_expression(rhs)?
+            && let Some(driver) = self.drivers.get(&rhs).cloned()
+        {
+            if self.outputs.contains(&lhs) {
+                driver.clone().expose_with_name(lhs.clone());
+            }
+            self.drivers.insert(lhs, driver);
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 fn set_default_drivers<I: Instantiable>(
@@ -1538,9 +1645,9 @@ fn set_default_drivers<I: Instantiable>(
             let inst =
                 I::from_constant(Logic::Z).unwrap_or(I::from_constant(Logic::False).unwrap());
             let id = output.clone() + "default_logic".into();
-            let net = netlist.insert_gate(inst, id, &[]).unwrap().get_output(0);
-            netlist.expose_net_with_name(net.clone(), output.clone());
-            drivers.insert(output.clone(), net);
+            let net = netlist.insert_gate_disconnected(inst, id);
+            netlist.expose_net_with_name(net.clone().into(), output.clone());
+            drivers.insert(output.clone(), net.into());
         }
     }
     Ok(())
@@ -1709,13 +1816,22 @@ where
             for (idx, output, driving) in self.visit_list_of_port_connections(&i, connections)? {
                 if !output {
                     let driver = match driving {
-                        IdentifierOrLogic::Identifier(id) => self.drivers[&id].clone(),
+                        IdentifierOrLogic::Identifier(id) => match self.drivers.get(&id).cloned() {
+                            Some(driver) => driver,
+                            None => {
+                                return VerilogError::new(
+                                    self.ast,
+                                    connections,
+                                    format!("Driver {} not found in netlist", id),
+                                );
+                            }
+                        },
                         IdentifierOrLogic::Logic(val) => {
                             let Some(inst) = I::from_constant(val) else {
                                 return VerilogError::new(
                                     self.ast,
                                     inst,
-                                    "Instiable type does not support constant".to_string(),
+                                    "Instantiable type does not support constant".to_string(),
                                 );
                             };
                             let inst_name = name.clone()
