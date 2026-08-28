@@ -1816,7 +1816,16 @@ where
             for (idx, output, driving) in self.visit_list_of_port_connections(&i, connections)? {
                 if !output {
                     let driver = match driving {
-                        IdentifierOrLogic::Identifier(id) => self.drivers[&id].clone(),
+                        IdentifierOrLogic::Identifier(id) => match self.drivers.get(&id).cloned() {
+                            Some(driver) => driver,
+                            None => {
+                                return VerilogError::new(
+                                    self.ast,
+                                    connections,
+                                    format!("Driver {} not found in netlist", id),
+                                );
+                            }
+                        },
                         IdentifierOrLogic::Logic(val) => {
                             let Some(inst) = I::from_constant(val) else {
                                 return VerilogError::new(
