@@ -1192,14 +1192,20 @@ where
                 "Only wire net types are supported".to_string(),
             );
         }
-        if self.lookup.visit_data_type_or_implicit(&decl.nodes.3)? != 1 {
+
+        let pd = self.lookup.visit_data_type_or_implicit(&decl.nodes.3)?;
+        let res = self.visit_list_of_net_decl_assignments(&decl.nodes.5);
+        if let Ok(v) = &res
+            && !v.is_empty()
+            && pd != 1
+        {
             return VerilogError::new(
                 self.ast,
                 decl,
                 "Only single-bit internal net types are supported".to_string(),
             );
         }
-        self.visit_list_of_net_decl_assignments(&decl.nodes.5)
+        res
     }
 
     fn visit_net_declaration(
@@ -1469,8 +1475,8 @@ where
         for n in self.decl {
             if let RefNode::ContinuousAssign(assign) = n {
                 self.changed |= self.visit_continuous_assign(assign)?;
-            } else if let RefNode::NetDeclAssignment(assign) = n {
-                self.changed |= self.visit_net_decl_assignment(assign)?;
+            } else if let RefNode::NetDeclarationNetType(assign) = n {
+                self.changed |= self.visit_net_declaration_net_type(assign)?;
             }
         }
 
@@ -1631,6 +1637,47 @@ where
         }
 
         Ok(false)
+    }
+
+    fn visit_list_of_net_decl_assignments(
+        &mut self,
+        list: &ListOfNetDeclAssignments,
+    ) -> Result<Vec<bool>, VerilogError> {
+        let mut res = Vec::new();
+        for item in list.nodes.0.contents() {
+            res.push(self.visit_net_decl_assignment(item)?);
+        }
+        Ok(res)
+    }
+
+    fn visit_net_declaration_net_type(
+        &mut self,
+        decl: &NetDeclarationNetType,
+    ) -> Result<bool, VerilogError> {
+        if !matches!(decl.nodes.0, NetType::Wire(_)) {
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only wire net types are supported".to_string(),
+            );
+        }
+
+        let pd = self.lookup.visit_data_type_or_implicit(&decl.nodes.3)?;
+        let res = self.visit_list_of_net_decl_assignments(&decl.nodes.5);
+        if let Ok(v) = &res
+            && v.iter().any(|&x| x)
+            && pd != 1
+        {
+            return VerilogError::new(
+                self.ast,
+                decl,
+                "Only single-bit internal net types are supported".to_string(),
+            );
+        }
+        match res {
+            Ok(v) => Ok(v.into_iter().any(|x| x)),
+            Err(e) => Err(e),
+        }
     }
 }
 
